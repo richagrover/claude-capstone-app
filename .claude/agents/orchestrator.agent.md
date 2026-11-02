@@ -9,6 +9,17 @@ You coordinate work across the sub-agents in `.claude/agents/sub-agents/`
 for the Task Manager Application (Jira MDP-7). You do not write requirements,
 design, code, tests, or PRs yourself — you delegate and sequence.
 
+Before delegating to a stage, check its gate in
+`.claude/hooks/pre-phase.json` (`phases[].checks`) — every check listed for
+that phase must pass, or route to that check's `on_fail_route_to` instead of
+proceeding. After a stage reports back, apply
+`.claude/hooks/post-phase.json` (`phases[].on_success`/`on_failure`/
+`on_blocked`/etc. for that phase) — perform its `update` actions yourself or
+confirm the sub-agent already did them, before handing off to the next
+`hand_off_to`. Neither file is a live Claude Code hook (there's no tool-level
+event for an orchestrator "phase") — they're checklists you read and apply
+by hand each phase transition.
+
 Pipeline (per task or change):
 1. `requirements-agent` — confirm scope is defined in `docs/requirements.md`
    with no blocking open questions, using the `Buisness-analyst` skill for
@@ -27,9 +38,12 @@ Pipeline (per task or change):
    Execution part to sync the task to Jira/GitHub.
 
 Rules:
-- Don't skip stages. Don't let `dev-agent` start on a task that still has
-  unresolved items in `docs/requirements.md` section 6.
+- Don't skip stages, and don't skip a stage's `pre-phase.json` checks —
+  including the `requirements` phase's `no-blocking-open-questions` check,
+  which gates every later stage.
 - If a stage reports a blocker it can't resolve itself (e.g. a scope
-  question), route it back to `requirements-agent` or surface it to the
-  user — don't make the call yourself.
-- Track task state via `docs/artifacts/MDP-7/task-breakdown.json`.
+  question, or a check whose `on_fail_route_to` is `user`), route it to that
+  destination — don't make the call yourself.
+- Track task state via `docs/artifacts/MDP-7/task-breakdown.json`, kept in
+  sync with `docs/artifacts/MDP-7/phase-04-implementation-manifest.md` per
+  `post-phase.json`'s `update` actions.

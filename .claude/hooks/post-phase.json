@@ -1,0 +1,127 @@
+{
+  "note": "Declarative post-phase state updates for the MDP-7 orchestrator pipeline. Read by orchestrator.agent.md (and the sub-agent finishing a stage) after a stage completes, to know which artifacts must be updated before handing off. This is NOT a Claude Code PostToolUse hook (unlike .claude/hooks/log-artifact-change.sh) — there is no native tool-level event for an orchestrator 'phase'; the orchestrator consults it as a checklist. See .claude/hooks/README.md.",
+  "phases": [
+    {
+      "phase": "requirements",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-01-requirements.md",
+            "action": "regenerate the baseline snapshot from docs/requirements.md if it changed materially"
+          }
+        ],
+        "hand_off_to": "architecture-agent"
+      },
+      "on_blocked": {
+        "update": [
+          {
+            "file": "docs/requirements.md",
+            "action": "add the unresolved item to section 6, Open Questions"
+          }
+        ],
+        "hand_off_to": "user"
+      }
+    },
+    {
+      "phase": "architecture",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-02-architecture.md",
+            "action": "clear the resolved item from 'Open Design Questions' for the task's area"
+          }
+        ],
+        "hand_off_to": "dev-agent"
+      },
+      "on_blocked": {
+        "hand_off_to": "requirements-agent"
+      }
+    },
+    {
+      "phase": "dev",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/task-breakdown.json",
+            "action": "set the task's status to its next state (e.g. ready -> in_review)"
+          },
+          {
+            "file": "docs/artifacts/MDP-7/phase-04-implementation-manifest.md",
+            "action": "mirror the same status change"
+          }
+        ],
+        "hand_off_to": "testing-agent"
+      },
+      "on_blocked": {
+        "hand_off_to": "user"
+      }
+    },
+    {
+      "phase": "testing",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-03-design-review.md",
+            "action": "record the actual pass/fail/skip result per Test Coverage Checklist case touched by this task"
+          }
+        ],
+        "hand_off_to": "review-agent"
+      },
+      "on_failure": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-03-design-review.md",
+            "action": "record the failing case(s) and reason"
+          }
+        ],
+        "hand_off_to": "dev-agent"
+      }
+    },
+    {
+      "phase": "review",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-03-design-review.md",
+            "action": "append an Approved review round entry"
+          }
+        ],
+        "hand_off_to": "pr-agent"
+      },
+      "on_changes_requested": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/phase-03-design-review.md",
+            "action": "append a Changes Requested review round entry with findings and who each was routed to"
+          }
+        ],
+        "hand_off_to": "dev-agent"
+      }
+    },
+    {
+      "phase": "pr",
+      "on_success": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/task-breakdown.json",
+            "action": "record the sync attempt result (success/failure, external key/URL, timestamp) on the task's entry"
+          },
+          {
+            "file": "docs/artifacts/MDP-7/phase-04-implementation-manifest.md",
+            "action": "mirror the same sync status"
+          }
+        ],
+        "hand_off_to": null
+      },
+      "on_skipped": {
+        "update": [
+          {
+            "file": "docs/artifacts/MDP-7/task-breakdown.json",
+            "action": "record why the sync/PR was skipped (e.g. config still TBD, no commits/remote) rather than silently omitting it"
+          }
+        ],
+        "hand_off_to": "user"
+      }
+    }
+  ]
+}

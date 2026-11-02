@@ -1,0 +1,92 @@
+{
+  "note": "Declarative phase-gate validation for the MDP-7 orchestrator pipeline. Read by orchestrator.agent.md before delegating to a stage's sub-agent. This is NOT a Claude Code PreToolUse hook — there is no native tool-level event for an orchestrator 'phase', so nothing here fires automatically; the orchestrator consults it as a checklist. See .claude/hooks/README.md.",
+  "phases": [
+    {
+      "phase": "requirements",
+      "agent": "requirements-agent",
+      "skill": "Buisness-analyst",
+      "requires": [],
+      "checks": [
+        {
+          "id": "no-blocking-open-questions",
+          "description": "docs/requirements.md section 6 (Open Questions) has no unresolved blocking items.",
+          "on_fail_route_to": "requirements-agent"
+        }
+      ]
+    },
+    {
+      "phase": "architecture",
+      "agent": "architecture-agent",
+      "skill": "sdlc-execution-skill",
+      "requires": ["requirements"],
+      "checks": [
+        {
+          "id": "requirements-stable",
+          "description": "requirements phase's no-blocking-open-questions check currently passes.",
+          "on_fail_route_to": "requirements-agent"
+        }
+      ]
+    },
+    {
+      "phase": "dev",
+      "agent": "dev-agent",
+      "skill": "sdlc-execution-skill",
+      "requires": ["architecture"],
+      "checks": [
+        {
+          "id": "design-settled",
+          "description": "docs/artifacts/MDP-7/phase-02-architecture.md 'Open Design Questions' section has no entry blocking this task's area.",
+          "on_fail_route_to": "architecture-agent"
+        },
+        {
+          "id": "task-not-blocked-on-config",
+          "description": "The task's entry in docs/artifacts/MDP-7/task-breakdown.json is not status=blocked_on_config. An operational config gap (JIRA_PROJECT_KEY, GITHUB_REPO, SSO provider) is not resolvable by dev-agent.",
+          "on_fail_route_to": "user"
+        }
+      ]
+    },
+    {
+      "phase": "testing",
+      "agent": "testing-agent",
+      "skill": "testing",
+      "requires": ["dev"],
+      "checks": [
+        {
+          "id": "implementation-complete",
+          "description": "dev-agent has marked the task's subtasks complete in docs/artifacts/MDP-7/task-breakdown.json (and phase-04-implementation-manifest.md).",
+          "on_fail_route_to": "dev-agent"
+        }
+      ]
+    },
+    {
+      "phase": "review",
+      "agent": "review-agent",
+      "requires": ["testing"],
+      "checks": [
+        {
+          "id": "tests-recorded",
+          "description": "The relevant cases in docs/artifacts/MDP-7/phase-03-design-review.md Test Coverage Checklist have a real recorded result (not left at 'planned') once implementation exists, and none relevant to this task are failing.",
+          "on_fail_route_to": "testing-agent"
+        }
+      ]
+    },
+    {
+      "phase": "pr",
+      "agent": "pr-agent",
+      "skill": "sdlc-execution-skill",
+      "requires": ["review"],
+      "checks": [
+        {
+          "id": "review-approved",
+          "description": "docs/artifacts/MDP-7/phase-03-design-review.md's latest review round for this change is Approved, not changes_requested.",
+          "on_fail_route_to": "review-agent"
+        },
+        {
+          "id": "sync-target-configured",
+          "description": "JIRA_PROJECT_KEY / GITHUB_REPO are set (not TBD) before attempting a real sync; if not, pr-agent must report the skip honestly rather than fabricate a sync.",
+          "on_fail_route_to": "user"
+        }
+      ]
+    }
+  ]
+}
