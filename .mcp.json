@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "GITHUB_REPOSITORY": "richagrover22/claude-capstone-app"
+      }
+    },
+    "jira": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@aashari/mcp-server-atlassian-jira"
+      ],
+      "env": {
+        "ATLASSIAN_SITE_NAME": "richagrover22",
+        "ATLASSIAN_USER_EMAIL": "richa.grover22@gmail.com",
+        "ATLASSIAN_API_TOKEN": "${JIRA_API_TOKEN}"
+      }
+    },
+    "claude-session-manager": {
+      "command": "uvx",
+      "args": ["--from", "claude-session-manager-mcp", "--with", "mcp<2", "claude-session-manager-mcp"]
+    }
+  }
+}
