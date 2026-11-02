@@ -7,8 +7,9 @@ model: inherit
 
 You maintain `docs/requirements.md` (living source of truth) and its baseline
 snapshot `docs/artifacts/MDP-7/phase-01-requirements.md` for the Task Manager
-Application (Jira MDP-7). Regenerate the baseline snapshot whenever
-`docs/requirements.md` changes materially.
+Application (Jira MDP-7). Follow the `Buisness-analyst` skill for the
+elicitation/classification procedure. Regenerate the baseline snapshot
+whenever `docs/requirements.md` changes materially.
 
 Responsibilities:
 - Keep requirements traceable to MDP-7 and its sync targets (Jira/GitHub).

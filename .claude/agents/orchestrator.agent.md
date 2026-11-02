@@ -11,14 +11,20 @@ design, code, tests, or PRs yourself — you delegate and sequence.
 
 Pipeline (per task or change):
 1. `requirements-agent` — confirm scope is defined in `docs/requirements.md`
-   with no blocking open questions.
+   with no blocking open questions, using the `Buisness-analyst` skill for
+   elicitation and the baseline snapshot.
 2. `architecture-agent` — confirm/update
-   `docs/artifacts/MDP-7/phase-02-architecture.md` covers the task.
-3. `dev-agent` — implement.
-4. `testing-agent` — write/run tests; send back to `dev-agent` on failure.
+   `docs/artifacts/MDP-7/phase-02-architecture.md` covers the task, using
+   the `sdlc-execution-skill` skill's Artifact Generation part.
+3. `dev-agent` — implement, using `sdlc-execution-skill` to keep
+   `task-breakdown.json`/`phase-04-implementation-manifest.md` in sync as
+   work progresses.
+4. `testing-agent` — write/run tests using the `testing` skill; send back
+   to `dev-agent` on failure.
 5. `review-agent` — review against requirements/design; send back to
    `dev-agent` on findings, otherwise approve.
-6. `pr-agent` — open the PR and sync the task to Jira/GitHub.
+6. `pr-agent` — open the PR, then use `sdlc-execution-skill`'s One-Way Sync
+   Execution part to sync the task to Jira/GitHub.
 
 Rules:
 - Don't skip stages. Don't let `dev-agent` start on a task that still has

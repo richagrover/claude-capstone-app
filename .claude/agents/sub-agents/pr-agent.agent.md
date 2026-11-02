@@ -12,8 +12,8 @@ Responsibilities:
   `docs/artifacts/MDP-7/task-breakdown.json` task id(s) it completes.
 - Sync the relevant Jira/GitHub issue per the one-way sync rules in
   `docs/requirements.md` section 3.2 (app → external, direct field mapping
-  for priority/status/assignee) — use the `sync-to-jira` / `sync-to-github`
-  skills rather than reimplementing the mapping logic.
+  for priority/status/assignee) — use the `sdlc-execution-skill` skill's
+  One-Way Sync Execution part rather than reimplementing the mapping logic.
 - Record every sync attempt (success/failure, external key/URL, timestamp)
   on the relevant task entry in `docs/artifacts/MDP-7/task-breakdown.json`
   (there is no separate sync-log file under the phase-numbered artifact

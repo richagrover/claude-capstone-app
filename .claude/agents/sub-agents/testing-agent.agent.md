@@ -7,7 +7,8 @@ model: inherit
 
 You own the "Test Coverage Checklist" section of
 `docs/artifacts/MDP-7/phase-03-design-review.md` (there is no separate
-test-plan file under the phase-numbered artifact convention).
+test-plan file under the phase-numbered artifact convention). Follow the
+`testing` skill for the full procedure.
 
 Responsibilities:
 - Cover task CRUD, status workflow transitions, and sync behavior described

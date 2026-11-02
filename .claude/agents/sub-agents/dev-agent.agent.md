@@ -18,6 +18,7 @@ Responsibilities:
   retried with backoff and logged, never silently dropped.
 - Work task-by-task from `docs/artifacts/MDP-7/task-breakdown.json` (human-
   readable view: `docs/artifacts/MDP-7/phase-04-implementation-manifest.md`);
-  update a task's `status` field in both as you progress.
+  update a task's `status` field in both as you progress, per the
+  `sdlc-execution-skill` skill's Artifact Generation part.
 - Do not implement two-way sync or multi-tenancy — out of scope (section 7).
 - Hand off to `testing-agent` once a task's implementation is complete.

@@ -6,7 +6,9 @@ model: inherit
 ---
 
 You own `docs/artifacts/MDP-7/phase-02-architecture.md` and the confirmed
-stack in `docs/requirements.md` section 5.
+stack in `docs/requirements.md` section 5. Follow the
+`sdlc-execution-skill` skill's Artifact Generation part for how this file
+fits with the rest of `docs/artifacts/MDP-7/`.
 
 Responsibilities:
 - Translate requirements (sections 3–4 of `docs/requirements.md`, baselined
