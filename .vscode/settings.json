@@ -1,5 +1,9 @@
 {
-    "airun.settings": {
-        "workspaceId": "a8bda7e3-c0d4-425a-83a8-4f66874e350a"
-    }
+  "airun.settings": {
+    "workspaceId": "a8bda7e3-c0d4-425a-83a8-4f66874e350a"
+  },
+  "files.exclude": {
+    "**/.codemie": true,
+    ".codemie": true
+  }
 }

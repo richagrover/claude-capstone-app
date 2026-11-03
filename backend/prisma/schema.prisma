@@ -1,0 +1,81 @@
+// Prisma schema for the Task Manager app (MDP-7, T-1).
+// Data model per docs/artifacts/MDP-7/phase-02-architecture.md "Data Model".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  Backlog
+  InProgress
+  InReview
+  Done
+}
+
+enum TaskPriority {
+  Low
+  Medium
+  High
+}
+
+enum SyncProvider {
+  jira
+  github
+}
+
+enum SyncResult {
+  ok
+  failed
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(Backlog)
+  priority    TaskPriority @default(Medium)
+  // "user id" per the data model — stored as a plain string (no User table
+  // in v1 scope; OAuth2/SSO user identity is T-7, blocked_on_config).
+  assignee    String?
+  dueDate     DateTime?    @map("due_date")
+  labels      String[]     @default([])
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("tasks")
+}
+
+// task_id is deliberately a plain uuid column, NOT a Prisma relation / FK to
+// Task — see phase-02-architecture.md Data Model section for the rationale
+// (delete-closes-linked-issues flow must be able to upsert SyncLink/
+// SyncAttempt rows after the owning Task row is already gone).
+
+model SyncLink {
+  id                String       @id @default(uuid())
+  taskId            String       @map("task_id")
+  provider          SyncProvider
+  externalKeyOrUrl  String?      @map("external_key_or_url")
+  lastSyncedAt      DateTime?    @map("last_synced_at")
+  lastStatus        SyncResult?  @map("last_status")
+  lastError         String?      @map("last_error")
+
+  @@unique([taskId, provider])
+  @@map("sync_links")
+}
+
+model SyncAttempt {
+  id        String       @id @default(uuid())
+  taskId    String       @map("task_id")
+  provider  SyncProvider
+  timestamp DateTime     @default(now())
+  result    SyncResult
+  detail    String?
+
+  @@index([taskId])
+  @@map("sync_attempts")
+}

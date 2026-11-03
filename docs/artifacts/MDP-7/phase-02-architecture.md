@@ -25,9 +25,9 @@ React (Vite) UI  --REST-->  Express API  --Prisma-->  PostgreSQL
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/tasks` | list, supports `?status=&assignee=&priority=` filters |
+| GET | `/api/tasks` | list, supports `?status=&assignee=&priority=` filters; each item includes a lightweight `syncStatus[]` summary (`{ provider: 'jira'\|'github', status: 'synced'\|'pending'\|'failed' }`), derived from `SyncLink`, so the board/list view (T-2) can render per-task sync badges (T-6) without an extra request per task |
 | POST | `/api/tasks` | create; enqueues sync job on success |
-| GET | `/api/tasks/:id` | fetch one, includes `syncLinks[]` |
+| GET | `/api/tasks/:id` | fetch one, includes full `syncLinks[]` (with `external_key_or_url`, `last_synced_at`, `last_status`, `last_error`) — the detail view backing T-6's "show `last_error` and link to the external issue" behavior |
 | PATCH | `/api/tasks/:id` | partial update; enqueues sync job if a mapped field changed |
 | DELETE | `/api/tasks/:id` | deletes task; enqueues a "close linked issues" job (does not delete Jira/GitHub issues) |
 | GET | `/api/sync-health` | counts of synced/pending/failed + list of currently-failing syncs (backs section 3.3 dashboard) |
@@ -36,6 +36,12 @@ Request/response bodies carry the Task fields listed in the data model below.
 `PATCH` accepts a partial object; only mapped fields (`priority`, `status`,
 `assignee`) trigger a sync job — other field changes (e.g. `description`)
 are v1-local only per the direct-mapping decision in `phase-01-requirements.md` §3.2.
+
+`syncStatus[]` (on the list endpoint) and `syncLinks[]` (on the single-task
+endpoint) are both read-time projections of the `SyncLink` table — no new
+stored field, just different levels of detail for the two UI surfaces
+(T-6's board badge needs only current status per provider; T-6's detail/
+failed view needs `last_error` and the external link too).
 
 ## Data Model (finalized for v1)
 
