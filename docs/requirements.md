@@ -2,7 +2,7 @@
 
 **Source:** Jira MDP-7 ("Build Task Manager Application with Agentic SDLC Sync")
 **Status:** Draft — under review
-**Last updated:** 2026-11-02
+**Last updated:** 2026-11-03
 
 ## 1. Overview
 
@@ -75,6 +75,20 @@ documentation and issue trackers stay up to date without manual duplication.
 None outstanding — all MVP-scope questions resolved (see sections 3.2/3.3).
 New questions will be added here as they come up (e.g., which specific Jira
 project key / GitHub repo to point at, once that's decided operationally).
+
+**Non-blocking operational config (tracked here, not a requirements gap):**
+`JIRA_PROJECT_KEY`, `GITHUB_REPO`, and the SSO provider are still TBD. These
+are operational/config decisions (values to be plugged in once an
+environment is chosen), not an ambiguity in what to build. They block only
+the tasks that directly call out to Jira, GitHub, or SSO
+(task-breakdown.json T-4 Jira sync integration, T-5 GitHub sync integration,
+T-7 OAuth2/SSO auth, T-9 close-linked-issue-on-delete) — those remain
+`blocked_on_config` until the values are set. They do **not** block task
+CRUD (T-1), the task board/list UI (T-2), the sync job queue infrastructure
+(T-3), the sync status UI (T-6), or the sync-health dashboard (T-8): those
+five have everything they need from sections 3.1–3.3, 4, and the tech stack
+in section 5, and do not require a live Jira project key, GitHub repo, or
+SSO provider to be designed or implemented against.
 
 ## 7. Future / Phase 2 Ideas (not in MVP)
 

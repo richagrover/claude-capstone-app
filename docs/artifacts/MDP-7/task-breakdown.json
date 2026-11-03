@@ -11,7 +11,7 @@
       "title": "Task CRUD API",
       "area": "backend",
       "requirement_ref": "phase-01-requirements.md#3.1",
-      "status": "ready",
+      "status": "in_review",
       "depends_on": [],
       "subtasks": [
         "Prisma schema for Task per phase-02-architecture.md Data Model",
@@ -24,6 +24,25 @@
       "acceptance_criteria": [
         "All CRUD endpoints match phase-02-architecture.md REST API Surface table",
         "PATCH only enqueues a sync job when a mapped field (priority/status/assignee) changes"
+      ],
+      "pr": {
+        "status": "skipped",
+        "reason": "No GitHub remote configured for this repository (git remote -v returned empty) and GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured requires a real configured target before attempting a PR/sync, so no PR was opened to avoid fabricating an owner/repo.",
+        "timestamp": "2026-11-03T09:08:04Z"
+      },
+      "sync_attempts": [
+        {
+          "target": "jira",
+          "status": "skipped",
+          "reason": "JIRA_PROJECT_KEY is still TBD (see field_mapping.jira.project_key); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        },
+        {
+          "target": "github",
+          "status": "skipped",
+          "reason": "GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        }
       ]
     },
     {
@@ -31,8 +50,10 @@
       "title": "Task board/list UI",
       "area": "frontend",
       "requirement_ref": "phase-01-requirements.md#3.1",
-      "status": "ready",
-      "depends_on": ["T-1"],
+      "status": "in_review",
+      "depends_on": [
+        "T-1"
+      ],
       "subtasks": [
         "Task list/board view with status columns",
         "Filter by status/assignee/priority",
@@ -41,6 +62,25 @@
       "acceptance_criteria": [
         "Board reflects live task state from T-1 API",
         "Filtering works without full page reload"
+      ],
+      "pr": {
+        "status": "skipped",
+        "reason": "No GitHub remote configured for this repository (git remote -v returned empty) and GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured requires a real configured target before attempting a PR/sync, so no PR was opened to avoid fabricating an owner/repo.",
+        "timestamp": "2026-11-03T09:08:04Z"
+      },
+      "sync_attempts": [
+        {
+          "target": "jira",
+          "status": "skipped",
+          "reason": "JIRA_PROJECT_KEY is still TBD (see field_mapping.jira.project_key); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        },
+        {
+          "target": "github",
+          "status": "skipped",
+          "reason": "GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        }
       ]
     },
     {
@@ -48,8 +88,10 @@
       "title": "Async sync job queue (BullMQ/Redis)",
       "area": "backend",
       "requirement_ref": "phase-01-requirements.md#3.2",
-      "status": "ready",
-      "depends_on": ["T-1"],
+      "status": "in_review",
+      "depends_on": [
+        "T-1"
+      ],
       "subtasks": [
         "Separate queues: sync:jira, sync:github",
         "Retry policy: exponential backoff, fixed attempt cap",
@@ -58,6 +100,25 @@
       "acceptance_criteria": [
         "Task API requests never block on job execution",
         "A failing job does not block other queued jobs"
+      ],
+      "pr": {
+        "status": "skipped",
+        "reason": "No GitHub remote configured for this repository (git remote -v returned empty) and GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured requires a real configured target before attempting a PR/sync, so no PR was opened to avoid fabricating an owner/repo.",
+        "timestamp": "2026-11-03T09:08:04Z"
+      },
+      "sync_attempts": [
+        {
+          "target": "jira",
+          "status": "skipped",
+          "reason": "JIRA_PROJECT_KEY is still TBD (see field_mapping.jira.project_key); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        },
+        {
+          "target": "github",
+          "status": "skipped",
+          "reason": "GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        }
       ]
     },
     {
@@ -66,7 +127,9 @@
       "area": "backend",
       "requirement_ref": "phase-01-requirements.md#3.2",
       "status": "blocked_on_config",
-      "depends_on": ["T-3"],
+      "depends_on": [
+        "T-3"
+      ],
       "subtasks": [
         "Create issue in fixed JIRA_PROJECT_KEY on task create",
         "Update mapped fields (priority/status/assignee) on task update",
@@ -84,7 +147,9 @@
       "area": "backend",
       "requirement_ref": "phase-01-requirements.md#3.2",
       "status": "blocked_on_config",
-      "depends_on": ["T-3"],
+      "depends_on": [
+        "T-3"
+      ],
       "subtasks": [
         "Create issue in fixed GITHUB_REPO on task create",
         "Update mapped fields on task update",
@@ -101,14 +166,36 @@
       "title": "Sync status UI (synced/pending/failed)",
       "area": "frontend",
       "requirement_ref": "phase-01-requirements.md#3.2",
-      "status": "ready",
-      "depends_on": ["T-1", "T-3"],
+      "status": "in_review",
+      "depends_on": [
+        "T-1",
+        "T-3"
+      ],
       "subtasks": [
         "Per-task sync badge (synced/pending/failed) from syncLinks[]",
         "Failed state shows last_error and links to the external issue if present"
       ],
       "acceptance_criteria": [
         "A failed sync is visibly distinct from a pending/synced one"
+      ],
+      "pr": {
+        "status": "skipped",
+        "reason": "No GitHub remote configured for this repository (git remote -v returned empty) and GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured requires a real configured target before attempting a PR/sync, so no PR was opened to avoid fabricating an owner/repo.",
+        "timestamp": "2026-11-03T09:08:04Z"
+      },
+      "sync_attempts": [
+        {
+          "target": "jira",
+          "status": "skipped",
+          "reason": "JIRA_PROJECT_KEY is still TBD (see field_mapping.jira.project_key); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        },
+        {
+          "target": "github",
+          "status": "skipped",
+          "reason": "GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        }
       ]
     },
     {
@@ -132,8 +219,10 @@
       "title": "Sync-health dashboard",
       "area": "frontend",
       "requirement_ref": "phase-01-requirements.md#3.3",
-      "status": "ready",
-      "depends_on": ["T-3"],
+      "status": "in_review",
+      "depends_on": [
+        "T-3"
+      ],
       "subtasks": [
         "GET /api/sync-health endpoint (backend, counts + failing list)",
         "Dashboard view consuming that endpoint"
@@ -141,6 +230,25 @@
       "acceptance_criteria": [
         "Counts match phase-02-architecture.md Sync-Health Dashboard section",
         "Failing syncs list shows last_error per task"
+      ],
+      "pr": {
+        "status": "skipped",
+        "reason": "No GitHub remote configured for this repository (git remote -v returned empty) and GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured requires a real configured target before attempting a PR/sync, so no PR was opened to avoid fabricating an owner/repo.",
+        "timestamp": "2026-11-03T09:08:04Z"
+      },
+      "sync_attempts": [
+        {
+          "target": "jira",
+          "status": "skipped",
+          "reason": "JIRA_PROJECT_KEY is still TBD (see field_mapping.jira.project_key); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        },
+        {
+          "target": "github",
+          "status": "skipped",
+          "reason": "GITHUB_REPO is still TBD (see field_mapping.github.repo); pre-phase gate pr.sync-target-configured failed, routed to user per on_fail_route_to. No outbound sync attempted.",
+          "timestamp": "2026-11-03T09:08:04Z"
+        }
       ]
     },
     {
@@ -149,7 +257,10 @@
       "area": "backend",
       "requirement_ref": "phase-01-requirements.md#3.2",
       "status": "blocked_on_config",
-      "depends_on": ["T-4", "T-5"],
+      "depends_on": [
+        "T-4",
+        "T-5"
+      ],
       "subtasks": [
         "Delete handler enqueues close-issue job per provider with an existing SyncLink"
       ],

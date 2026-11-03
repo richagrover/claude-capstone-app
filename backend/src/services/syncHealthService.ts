@@ -39,13 +39,21 @@ export async function getSyncHealth(): Promise<SyncHealth> {
     }
   }
 
-  // "pending" = job queued/enqueued, no result (SyncLink row) yet. Every
-  // task is expected to eventually have one SyncLink row per provider
-  // (create always enqueues both); until a job resolves, that (task,
-  // provider) pair has no row.
-  const totalTasks = await prisma.task.count();
-  const expectedLinks = totalTasks * PROVIDERS_PER_TASK;
-  const pending = Math.max(expectedLinks - links.length, 0);
+  // "pending" = job queued/enqueued, no result (SyncLink row) yet, for a
+  // task that still exists. Every task is expected to eventually have one
+  // SyncLink row per provider (create always enqueues both); until a job
+  // resolves, that (task, provider) pair has no row.
+  //
+  // Scoped to *currently existing* tasks only: a deleted task's SyncLink
+  // rows deliberately outlive the Task row (close-linked-issue flow, see
+  // phase-02-architecture.md Data Model), so they already have a result
+  // (counted in synced/failed above) and must not be allowed to skew this
+  // task-count-based estimate for tasks that still exist.
+  const taskIds = (await prisma.task.findMany({ select: { id: true } })).map((t) => t.id);
+  const taskIdSet = new Set(taskIds);
+  const linksForExistingTasks = links.filter((l) => taskIdSet.has(l.taskId)).length;
+  const expectedLinks = taskIds.length * PROVIDERS_PER_TASK;
+  const pending = Math.max(expectedLinks - linksForExistingTasks, 0);
 
   return {
     counts: { synced, pending, failed },
