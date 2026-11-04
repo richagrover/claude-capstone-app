@@ -2,11 +2,11 @@
   "pipelineId": "MDP-7",
   "storyKey": "MDP-7",
   "branch": "feature/mdp-7-sdlc-pipeline",
-  "currentPhase": 1,
+  "currentPhase": 2,
   "status": "in-progress",
   "phases": [
     { "id": 1, "name": "requirements-analysis", "agent": "requirements-agent", "artifact": "docs/MDP-7/01-requirements.md", "status": "completed", "startedAt": "2026-11-04T00:00:00+05:30", "completedAt": "2026-11-04T00:05:00+05:30" },
-    { "id": 2, "name": "architecture-design", "agent": "architecture-agent", "artifact": "docs/MDP-7/02-architecture.md", "status": "pending", "startedAt": null, "completedAt": null },
+    { "id": 2, "name": "architecture-design", "agent": "architecture-agent", "artifact": "docs/MDP-7/02-architecture.md", "status": "completed", "startedAt": "2026-11-04T00:05:00+05:30", "completedAt": "2026-11-04T00:15:00+05:30" },
     { "id": 3, "name": "design-review", "agent": "design-review-agent", "artifact": "docs/MDP-7/03-design-review.md", "status": "pending", "startedAt": null, "completedAt": null },
     { "id": 4, "name": "implementation-planning", "agent": "implementation-planner-agent", "artifact": "docs/MDP-7/04-impl-plan.md", "status": "pending", "startedAt": null, "completedAt": null },
     { "id": 5, "name": "code-implementation", "agent": "implementation-agent", "artifact": "docs/MDP-7/05-implementation-summary.md", "status": "pending", "startedAt": null, "completedAt": null },
@@ -17,5 +17,5 @@
   "humanCheckpoints": [
     { "afterPhase": 3, "label": "Design approval before implementation begins", "status": "pending" }
   ],
-  "lastUpdated": "2026-11-04T00:05:00+05:30"
+  "lastUpdated": "2026-11-04T00:15:00+05:30"
 }
