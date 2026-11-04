@@ -1,26 +1,25 @@
-import 'dotenv/config';
-import { Worker } from 'bullmq';
-import { connection } from './connection';
-import { GITHUB_QUEUE_NAME, JIRA_QUEUE_NAME } from './queueNames';
-import { processSyncJob } from './workers';
+/**
+ * Worker process entrypoint — run via `npm run worker`, as a separate process from the API
+ * server (architecture S-2: statelessness). Starts both provider workers independently; a
+ * missing provider's credentials never crash this process (architecture §6 step 6).
+ */
+import { createProviderWorker } from "./workers";
+import { getGithubProvider } from "./providers/githubProvider";
+import { getJiraProvider } from "./providers/jiraProvider";
 
-const CONCURRENCY = Number(process.env.SYNC_WORKER_CONCURRENCY ?? 5);
+function main(): void {
+  const githubWorker = createProviderWorker("github", getGithubProvider());
+  const jiraWorker = createProviderWorker("jira", getJiraProvider());
 
-const jiraWorker = new Worker(JIRA_QUEUE_NAME, processSyncJob, { connection, concurrency: CONCURRENCY });
-const githubWorker = new Worker(GITHUB_QUEUE_NAME, processSyncJob, { connection, concurrency: CONCURRENCY });
-
-for (const worker of [jiraWorker, githubWorker]) {
-  worker.on('completed', (job) => {
+  if (!githubWorker && !jiraWorker) {
     // eslint-disable-next-line no-console
-    console.log(`[${worker.name}] job ${job.id} (task ${job.data.taskId}) completed`);
-  });
-  worker.on('failed', (job, err) => {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[${worker.name}] job ${job?.id} (task ${job?.data.taskId}) failed on attempt ${job?.attemptsMade}: ${err.message}`
+    console.warn(
+      "No sync providers are configured. Worker process is idle until GitHub and/or Jira credentials are set.",
     );
-  });
+  } else {
+    // eslint-disable-next-line no-console
+    console.log("Sync worker process started.");
+  }
 }
 
-// eslint-disable-next-line no-console
-console.log(`Sync workers started: ${JIRA_QUEUE_NAME}, ${GITHUB_QUEUE_NAME}`);
+main();

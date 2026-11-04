@@ -1,5 +1,6 @@
-// Prisma schema for the Task Manager app (MDP-7, T-1).
-// Data model per docs/artifacts/MDP-7/phase-02-architecture.md "Data Model".
+// Prisma schema for the Task Manager application.
+// Contract source: docs/MDP-7/02-architecture.md §4; indexes resolve design-review findings
+// B-4 (filter-column indexes) and B-1 (sync-health aggregate index).
 
 generator client {
   provider = "prisma-client-js"
@@ -24,8 +25,8 @@ enum TaskPriority {
 }
 
 enum SyncProvider {
-  jira
   github
+  jira
 }
 
 enum SyncResult {
@@ -39,38 +40,41 @@ model Task {
   description String?
   status      TaskStatus   @default(Backlog)
   priority    TaskPriority @default(Medium)
-  // "user id" per the data model — stored as a plain string (no User table
-  // in v1 scope; OAuth2/SSO user identity is T-7, blocked_on_config).
   assignee    String?
-  dueDate     DateTime?    @map("due_date")
+  dueDate     DateTime?
   labels      String[]     @default([])
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
+  // Resolves B-4: indexes on every GET /tasks filter column.
+  @@index([status])
+  @@index([assignee])
+  @@index([priority])
   @@map("tasks")
 }
 
-// task_id is deliberately a plain uuid column, NOT a Prisma relation / FK to
-// Task — see phase-02-architecture.md Data Model section for the rationale
-// (delete-closes-linked-issues flow must be able to upsert SyncLink/
-// SyncAttempt rows after the owning Task row is already gone).
-
+// Current sync state, one row per (taskId, provider). `taskId` is intentionally a plain column
+// (no @relation / enforced FK to Task) — see docs/MDP-7/02-architecture.md §4 rationale: a
+// task-delete must still be able to write a "close" result here after the Task row is gone.
 model SyncLink {
-  id                String       @id @default(uuid())
-  taskId            String       @map("task_id")
-  provider          SyncProvider
-  externalKeyOrUrl  String?      @map("external_key_or_url")
-  lastSyncedAt      DateTime?    @map("last_synced_at")
-  lastStatus        SyncResult?  @map("last_status")
-  lastError         String?      @map("last_error")
+  id               String      @id @default(uuid())
+  taskId           String
+  provider         SyncProvider
+  externalKeyOrUrl String?
+  lastSyncedAt     DateTime?
+  lastStatus       SyncResult?
+  lastError        String?
 
   @@unique([taskId, provider])
+  // Resolves B-1: backs the GROUP BY provider, lastStatus sync-health aggregate.
+  @@index([provider, lastStatus])
   @@map("sync_links")
 }
 
+// Append-only audit trail of every sync attempt. Same unenforced-taskId rationale as SyncLink.
 model SyncAttempt {
   id        String       @id @default(uuid())
-  taskId    String       @map("task_id")
+  taskId    String
   provider  SyncProvider
   timestamp DateTime     @default(now())
   result    SyncResult
