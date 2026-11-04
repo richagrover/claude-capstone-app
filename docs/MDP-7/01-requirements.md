@@ -1,182 +1,94 @@
-# MDP-7: Requirements Specification
+# Phase 01 — Requirements Analysis
 
-**Phase:** 01 - Requirements Analysis
-**Source:** `docs/MDP-7/story.json`
-**Story:** Build Task Manager Application with Agentic SDLC Sync
-**Status:** Parking lot | **Priority:** Medium | **Reporter:** richa grover
+**Story Key:** MDP-7
+**Title:** Build Task Manager Application with Agentic SDLC Sync
+**Issue Type:** Idea
+**Status:** Parking lot
+**Priority:** Medium
+**Reporter:** richa grover
+**Created:** 2026-10-26T14:40:22.282+0530
 
 ## 1. Overview
 
-MDP-7 has two intertwined deliverables:
+As an engineering team, we want to establish a secure, modular, and automated SDLC workflow
+using structured agents and strict quality rules, so that we can streamline software delivery
+and maintain repository integrity. The system comprises two coupled deliverables:
 
-1. **Product scope** — an enterprise-grade Task Manager application (task CRUD, status/priority
-   tracking, and sync-health reporting against external providers such as GitHub/Jira).
-2. **Process scope** — the delivery of that product must itself be executed through a modular,
-   agent-based SDLC pipeline (`.claude/agents/`) of 8 sequential phases, each phase gated by
-   persisted state and governance rules (no hardcoded secrets, no direct commits to `main`,
-   mandatory test verification, clean PR output).
+1. An enterprise-grade **Task Manager Application** (backend + frontend).
+2. An **Agentic SDLC pipeline** — a modular, agent-based automation layer (`.claude/` structure)
+   that drives the application's development lifecycle through 8 sequential phases, persisting
+   state and producing a documentation artifact for each phase.
 
-The product functional requirements below are derived from the story's scope line ("Modular
-Agent-based Architecture", task manager with SDLC sync) since no separate product-requirements
-document exists. They are informed by precedent in this repository's git history (a prior
-Express/Prisma backend and React/Vite frontend implementation with task CRUD, filtering, and
-sync-health reporting), used here only as a shape/inspiration reference, not as a restored
-implementation.
+## 2. Scope
 
-## 2. Functional Requirements — Task Manager Application
+- Modular agent-based architecture under `.claude/` (agents, skills, hooks) that implements each
+  SDLC phase as a discrete, independently invokable unit.
+- Execution strategy composed of 8 sequential pipeline phases, executed in strict order, with
+  state persisted between phases and a human checkpoint before implementation begins.
 
-### FR-1: Task data model
-- FR-1.1: A Task has: `id` (unique identifier), `title` (required, non-empty string), `description`
-  (optional string), `status` (enum, e.g. `Backlog`, `InProgress`, `InReview`, `Done`), `priority`
-  (enum, e.g. `Low`, `Medium`, `High`), optional `assignee`, optional `dueDate`, optional `labels`
-  (list of strings), `createdAt`, `updatedAt`.
-- FR-1.2: `status` and `priority` must default to a sensible value (`Backlog` / `Medium`) when not
-  supplied on create.
+## 3. Functional Requirements
 
-### FR-2: Task CRUD API
-- FR-2.1: Create a task (`POST /api/tasks`) with server-side validation of required fields and enum
-  values; invalid input is rejected with a 4xx error and a structured error body (no stack traces
-  leaked to the client).
-- FR-2.2: List tasks (`GET /api/tasks`) with optional filtering by `status`, `assignee`, and
-  `priority` query parameters, combinable.
-- FR-2.3: Retrieve a single task by id (`GET /api/tasks/:id`); returns 404 with a structured error
-  when the id does not exist.
-- FR-2.4: Update a task (`PATCH /api/tasks/:id`) with partial-body validation; returns 404 for an
-  unknown id.
-- FR-2.5: Delete a task (`DELETE /api/tasks/:id`); returns 404 for an unknown id and succeeds
-  idempotently otherwise (no error if already deleted, per the agreed delete semantics).
+| ID | Requirement |
+|----|-------------|
+| FR-1 | The pipeline MUST define exactly 8 sequential SDLC phases, each mapped 1:1 to an agent definition under `.claude/agents/` and an artifact file under `docs/MDP-7/`: (1) requirements-analysis → `01-requirements.md`, (2) architecture-design → `02-architecture.md`, (3) design-review → `03-design-review.md`, (4) implementation-planning → `04-impl-plan.md`, (5) code-implementation → `05-implementation-summary.md`, (6) code-review → `06-code-review.md`, (7) verification-testing → `07-verification-report.md`, (8) pr-creation → `08-pr-summary.md`. |
+| FR-2 | Each phase MUST be executed by its dedicated agent (requirements-agent, architecture-agent, design-review-agent, implementation-planner-agent, implementation-agent, code-review-agent, verification-agent, pr-creator-agent). |
+| FR-3 | The orchestrator MUST parse the raw Jira/user-story input (`docs/MDP-7/story.json`) and extract functional requirements, system constraints (NFRs), and acceptance criteria as the output of Phase 1. |
+| FR-4 | Pipeline state (current phase, phase status, timestamps) MUST be tracked and persisted in `docs/MDP-7/pipeline-state.json`, with each phase transition recorded (`pending` → `in-progress` → `completed`). |
+| FR-5 | The pipeline MUST execute phases strictly in sequence, from requirements analysis through PR creation, without skipping mandatory checkpoints. |
+| FR-6 | A human-in-the-loop validation checkpoint MUST occur after Phase 3 (design review), labeled "Design approval before implementation begins", blocking progression to Phase 4 until explicitly approved. |
+| FR-7 | After the code-implementation phase, automated test suites MUST be executed, and verification output MUST be written to `docs/MDP-7/07-verification-report.md`. |
+| FR-8 | The final phase MUST produce a clean, structured Pull Request summary (title, description, test plan) written to `docs/MDP-7/08-pr-summary.md`. |
+| FR-9 | The Task Manager Application MUST support core task-management operations (create, read, update, delete, and status/sync tracking) exposed via a backend API and consumed by a frontend client. |
+| FR-10 | The application MUST support synchronization of task/documentation state with external SDLC systems (e.g., Jira/GitHub) via a sync-health mechanism that reports pending/failed/successful sync counts. |
 
-### FR-3: Task list / filter UI
-- FR-3.1: The frontend displays the task list with visible status and priority indicators.
-- FR-3.2: The frontend supports filtering the visible list by status, assignee, and/or priority,
-  mirroring the backend's filter parameters.
-- FR-3.3: The frontend supports creating, editing, and deleting a task through forms/dialogs that
-  surface validation errors returned by the API.
+## 4. Non-Functional Requirements / System Constraints
 
-### FR-4: External provider sync (GitHub / Jira)
-- FR-4.1: A task may be linked to an external tracking item (a "sync link") in one or more
-  providers (GitHub issue, Jira issue), identified by provider name and external id/key.
-- FR-4.2: Sync operations (create/update the linked external item from task state) are processed
-  asynchronously (e.g. via a queue/worker) rather than blocking the API request that triggered them.
-- FR-4.3: Each sync attempt records its outcome (`ok` / `failed`), a timestamp, and, on failure, an
-  error reason — without ever persisting or logging the credentials used to perform the sync
-  (see NFR-2).
-- FR-4.4: Provider integration is abstracted behind a common interface so GitHub and Jira providers
-  are interchangeable/pluggable, and additional providers can be added without changing task-level
-  logic.
+| ID | Category | Constraint |
+|----|----------|------------|
+| NFR-1 | Security & Governance | Hardcoded secrets, API keys, tokens, or credentials are strictly forbidden in source code or artifacts. Credentials MUST be supplied via dynamic environment variables (e.g., `GITHUB_TOKEN`) or secure local configuration, never written to logs, artifacts, or shared repositories. |
+| NFR-2 | Git Workflow | Direct commits to `main`/`master` are prohibited. All work MUST occur on feature branches, with conventional commit messages (`feat:`, `fix:`, `refactor:`, `docs:`), and branches kept current with upstream before PR creation. |
+| NFR-3 | Code Quality | Code MUST follow clean-code principles, modular structure, and descriptive naming. Business logic MUST be covered by unit and integration tests. Hardcoded/magic values and unhandled exceptions are disallowed. |
+| NFR-4 | Consistency | Formatting, type safety, and error handling MUST be consistent across backend and frontend codebases. |
+| NFR-5 | Workflow Integrity | Pipeline state transitions MUST be persisted accurately and atomically in `pipeline-state.json` so the pipeline can resume or be audited after interruption. |
+| NFR-6 | Auditability | Every phase MUST leave a durable, reviewable artifact (Markdown/JSON) documenting its output, independent of chat/session history. |
+| NFR-7 | Human Oversight | Critical-path decisions (notably the post-design-review checkpoint) MUST require explicit human approval before the pipeline advances — no agent may self-approve past this gate. |
 
-### FR-5: Sync-health reporting
-- FR-5.1: A sync-health endpoint/view (`GET /api/sync-health` or equivalent) reports, per provider:
-  counts of tasks synced successfully, tasks with failed sync, and tasks pending sync.
-- FR-5.2: The frontend exposes a sync-health view summarizing the above counts so an operator can
-  see integration health at a glance.
-- FR-5.3: "Pending" sync count must correctly reflect tasks that have never been synced or whose
-  last attempt is still in-flight, distinct from "failed".
+## 5. Acceptance Criteria (from story.json)
 
-## 3. Acceptance Criteria Restated as Testable Requirements (AC-1..AC-6)
+| ID | Category | Criterion |
+|----|----------|-----------|
+| AC-1 | Functional Requirements | All 8 SDLC phases (`.claude/agents/`) must be mapped to their respective artifact files (`docs/MDP-7/`). |
+| AC-2 | Functional Requirements | Pipeline state transitions must be tracked with persistence checks in `docs/MDP-7/pipeline-state.json`. |
+| AC-3 | Security & Governance Rules | Hardcoded secrets, API tokens, or sensitive credentials are strictly prohibited in source code or artifacts. |
+| AC-4 | Security & Governance Rules | Direct commits to the main branch are not allowed; proper feature branching must be followed. |
+| AC-5 | Quality & Verification Checkpoints | After the implementation phase, test suites must be run and verification output must be saved in `07-verification-report.md`. |
+| AC-6 | Quality & Verification Checkpoints | The final step must produce a clean Pull Request summary. |
 
-| ID | Requirement | Test / verification method |
-|----|-------------|-----------------------------|
-| AC-1 | All 8 SDLC pipeline phases defined under `.claude/agents/` map 1:1 to an artifact file under `docs/MDP-7/` (e.g. phase 01 → `01-requirements.md`, phase 02 → `02-architecture.md`, ... through phase 08). No phase may be skipped or left without a corresponding artifact. | Verification phase confirms, for each of the 8 phases, that the agent definition exists AND the matching `docs/MDP-7/0N-*.md` artifact exists and is non-empty. |
-| AC-2 | Every pipeline phase transition (start, in-progress, complete, blocked) is persisted to `docs/MDP-7/pipeline-state.json`, including which phase is active/last-completed, so the pipeline can be resumed or audited. | Inspect `pipeline-state.json` after each phase; confirm it was updated with a new transition entry/timestamp before the next phase begins. |
-| AC-3 | No source file, config file, or generated artifact in this repository contains a hardcoded secret, API token, password, or credential. Secrets are supplied only via environment variables (e.g. `GITHUB_TOKEN`, Jira API token) at runtime. | Static scan (e.g. grep for token-like patterns, review of `.env.example` vs `.env`) during the verification phase; code review checklist item. |
-| AC-4 | No commit lands directly on `main`/`master`. All work happens on a feature branch (e.g. `feature/mdp-7-*`) and reaches `main` only via Pull Request. | `git log` / branch-protection check confirming the active branch is a feature branch and the PR-creation phase opens a PR rather than pushing to `main`. |
-| AC-5 | After the implementation phase completes, the full test suite (unit + integration) is executed, and its results (pass/fail counts, coverage if available, failures with detail) are written to `docs/MDP-7/07-verification-report.md`. | Confirm `07-verification-report.md` exists, is dated after the implementation artifact, and contains actual test run output, not a placeholder. |
-| AC-6 | The final pipeline phase produces a clean, human-readable Pull Request summary (what changed, why, how it was tested, links to artifacts) suitable for a reviewer, with no leftover debug output or TODOs. | Review the PR description produced by the final phase against a clean-summary checklist (summary, test plan, no secrets, no noise). |
+**Total acceptance criteria: 6** (2 Functional, 2 Security & Governance, 2 Quality & Verification).
 
-## 4. Non-Functional Requirements / Constraints
+## 6. Dependencies & Assumptions
 
-### NFR-1: Pipeline governance (process)
-- NFR-1.1: The 8 pipeline phases execute sequentially; a later phase must not begin before its
-  predecessor's artifact and state transition are recorded (ties to AC-1/AC-2).
-- NFR-1.2: Human-in-the-loop validation checkpoints must be respected before advancing past
-  critical stages (e.g. architecture sign-off, pre-PR review) — the pipeline must not silently
-  auto-advance past a checkpoint awaiting approval.
+- Backend and frontend application source trees are currently absent from the repository
+  (intentionally removed as part of a clean restart) and will be recreated during Phases 4–5.
+- `docs/MDP-7/story.json` is treated as the authoritative source of truth for this phase's extraction.
+- Subsequent phases assume this requirements document as their primary input and must not
+  re-derive requirements independently.
+- An external Jira/GitHub integration is assumed available for sync-health functionality (FR-10),
+  authenticated solely via environment-based credentials per NFR-1.
 
-### NFR-2: Security & secrets (ties to AC-3)
-- NFR-2.1: Hardcoding API keys, passwords, or tokens in source code, config, or committed artifacts
-  is strictly forbidden.
-- NFR-2.2: Secrets are read from environment variables / secure local configuration only
-  (e.g. `GITHUB_TOKEN`, Jira credentials), never written into logs, artifacts, or shared repos.
-- NFR-2.3: Error messages and sync-health output must not leak credential values, even on failure.
+## 7. Edge Cases & Risks
 
-### NFR-3: Branching & version control (ties to AC-4)
-- NFR-3.1: No direct commits to `main`/`master`; all changes flow through feature branches.
-- NFR-3.2: Commit messages follow conventional format (`feat:`, `fix:`, `refactor:`, etc.).
-- NFR-3.3: Feature branches are kept up to date with the latest `main` before PR merge.
+- Pipeline interruption mid-phase: state in `pipeline-state.json` must reflect the last
+  successfully completed phase, not a partially-written one.
+- Human checkpoint rejection after Phase 3: the pipeline must support revision of the architecture
+  artifact and re-submission for approval rather than silently proceeding.
+- Sync failures with external systems should be surfaced via sync-health status rather than
+  failing silently or blocking unrelated task operations.
+- Any attempt to bypass branch protection or embed secrets must be rejected at the governance
+  level (NFR-1, NFR-2), not merely flagged after the fact.
 
-### NFR-4: Code quality & testing
-- NFR-4.1: Business logic (task CRUD, filtering, sync orchestration, sync-health aggregation) must
-  be covered by unit and integration tests.
-- NFR-4.2: No hardcoded "magic" values or unhandled exceptions; consistent formatting, type safety,
-  and error handling across backend and frontend.
-- NFR-4.3: All local changes must be tested and verified before a PR is opened (ties to AC-5/AC-6).
+## 8. Out of Scope (for this phase)
 
-### NFR-5: Reliability of external sync
-- NFR-5.1: A failure to reach an external provider (GitHub/Jira) must not corrupt task state or
-  crash the application; it is recorded as a failed sync attempt and is retryable.
-- NFR-5.2: Sync processing must be decoupled (queued/asynchronous) so provider latency/outages do
-  not block task CRUD operations.
-
-## 5. Dependencies
-
-- D-1: `.claude/agents/` definitions for each of the 8 SDLC phases must exist and be addressable by
-  the orchestrator (requirements, architecture, design-review, implementation, code-review,
-  testing/verification, PR-creation, and the orchestrator itself or an equivalent 8th phase).
-- D-2: `docs/MDP-7/pipeline-state.json` must exist (created/initialized) before phase transitions
-  can be persisted.
-- D-3: External provider credentials (GitHub token, Jira API token) must be available via
-  environment variables at runtime for FR-4 sync features to function; their absence should
-  degrade gracefully (sync marked pending/unavailable) rather than crash the app.
-- D-4: A backend persistence layer (database) is required to store tasks and sync-link/sync-attempt
-  records durably across restarts.
-- D-5: A queue/worker mechanism (or equivalent async processing) is required to satisfy FR-4.2's
-  decoupling requirement.
-- D-6: Git remote / PR tooling (e.g. GitHub) must be reachable and authenticated via a non-hardcoded
-  token for the final PR-creation phase (AC-6).
-
-## 6. Edge Cases
-
-### Task CRUD
-- EC-1: Creating a task with an empty/whitespace-only title must be rejected (FR-2.1).
-- EC-2: Creating/updating a task with an invalid `status` or `priority` enum value must be
-  rejected with a clear validation error, not silently coerced.
-- EC-3: Requesting, updating, or deleting a task by a non-existent or malformed id must return 404
-  (or 400 for malformed id), never a 500.
-- EC-4: Filtering by a combination of query parameters that matches zero tasks must return an
-  empty list, not an error.
-- EC-5: Concurrent updates to the same task (e.g. two PATCH requests racing) must not corrupt data;
-  last-write-wins semantics (via `updatedAt`) are acceptable but must be deterministic.
-
-### Sync / sync-health
-- EC-6: A task deleted locally while it still has an in-flight or previously-successful sync link
-  must not leave the external provider or the sync-health counts in an inconsistent state (e.g. the
-  "delete-closes-linked-issue" flow, or an explicit decision to leave the external item untouched,
-  must be defined and tested).
-- EC-7: A provider outage or auth failure during sync must increment the "failed" count, record a
-  reason, and must not retry in a tight loop that could exhaust rate limits.
-- EC-8: A task with no sync link at all must be counted as "pending", not "failed".
-- EC-9: Partial provider configuration (e.g. GitHub token present, Jira token absent) must allow
-  GitHub sync to proceed while Jira sync is reported as unavailable/pending, rather than failing
-  both.
-
-### Pipeline / governance
-- EC-10: If a phase's artifact generation fails partway through, `pipeline-state.json` must reflect
-  the phase as incomplete/blocked, not falsely marked complete (ties to AC-2).
-- EC-11: If a secret is accidentally introduced in a diff, the pipeline's quality/security checks
-  must catch it before the PR-creation phase runs (ties to AC-3/AC-6).
-- EC-12: An attempt to commit directly to `main` (e.g. due to a misconfigured branch) must be
-  detectable/blocked before it reaches the remote (ties to AC-4).
-- EC-13: If the test suite fails during the verification phase, `07-verification-report.md` must
-  record the failure explicitly (not be skipped or show a false "all passed"), and the pipeline
-  should not advance to PR-creation on a failing suite without explicit human override.
-
-## 7. Traceability Summary
-
-| Area | Covered by |
-|------|-----------|
-| Task manager product scope | FR-1 .. FR-5 |
-| Governance acceptance criteria | AC-1 .. AC-6 (Section 3) |
-| Security/branching/testing constraints | NFR-1 .. NFR-5 |
-| Build-time dependencies | D-1 .. D-6 |
-| Risk areas | EC-1 .. EC-13 |
+- Architectural/component design decisions (deferred to Phase 2).
+- Implementation details and code structure (deferred to Phases 4–5).
+- Test case design and execution (deferred to Phase 7).
