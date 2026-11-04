@@ -1,54 +1,105 @@
-import type { SyncProviderClient } from '../providerInterface';
+/**
+ * GitHub provider adapter. Reads GITHUB_TOKEN/GITHUB_REPO once at module load; no other layer
+ * ever sees the raw token (NFR-1). Maps a TaskSnapshot onto a GitHub issue.
+ */
+import type { SyncProviderClient } from "../providerInterface";
+import type { TaskSnapshot } from "../types";
+
+const GITHUB_API_BASE_URL = "https://api.github.com";
+
+export function isGithubConfigured(): boolean {
+  return Boolean(process.env.GITHUB_TOKEN && process.env.GITHUB_REPO);
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "Content-Type": "application/json",
+  };
+}
+
+function toIssueBody(snapshot: TaskSnapshot): {
+  title: string;
+  body: string;
+  labels: string[];
+} {
+  return {
+    title: snapshot.title,
+    body: `Assignee: ${snapshot.assignee ?? "unassigned"}\nPriority: ${snapshot.priority}\nStatus: ${snapshot.status}`,
+    labels: snapshot.labels,
+  };
+}
 
 /**
- * Stubbed GitHub client. T-5 (real GitHub REST API integration) is
- * blocked_on_config (GITHUB_REPO is TBD, see
- * docs/artifacts/MDP-7/phase-02-architecture.md Config section) and is out
- * of scope for this dev pass.
- *
- * Mirrors jiraProvider.ts: never fabricates a repo — if GITHUB_REPO is
- * unset, every call fails with an explicit error visible via
- * SyncLink/SyncAttempt rather than silently succeeding.
- *
- * Swap this module's exported object for a real implementation of
- * SyncProviderClient (calling the GitHub REST API against GITHUB_REPO with
- * GITHUB_TOKEN) once config is available.
+ * Creates a GitHubProviderClient bound to the given repo/token. Reading the credentials happens
+ * once, at construction time (module load in production usage), never per-call elsewhere.
  */
-export const githubProvider: SyncProviderClient = {
-  async createIssue() {
-    const repo = process.env.GITHUB_REPO;
-    if (!repo) {
-      return {
-        ok: false,
-        error:
-          'GITHUB_REPO is not configured (blocked_on_config) — stub GitHub provider cannot create an issue',
-      };
-    }
-    return {
-      ok: false,
-      error: 'GitHub integration not implemented yet (T-5 is out of scope for this dev pass)',
-    };
-  },
+export function createGithubProvider(
+  token: string,
+  repo: string,
+): SyncProviderClient {
+  return {
+    async createIssue(snapshot: TaskSnapshot) {
+      const response = await fetch(
+        `${GITHUB_API_BASE_URL}/repos/${repo}/issues`,
+        {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify(toIssueBody(snapshot)),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`GitHub createIssue failed with status ${response.status}`);
+      }
+      const data = (await response.json()) as { html_url: string };
+      return { externalKeyOrUrl: data.html_url };
+    },
 
-  async updateIssue() {
-    const repo = process.env.GITHUB_REPO;
-    if (!repo) {
-      return {
-        ok: false,
-        error:
-          'GITHUB_REPO is not configured (blocked_on_config) — stub GitHub provider cannot update an issue',
-      };
-    }
-    return {
-      ok: false,
-      error: 'GitHub integration not implemented yet (T-5 is out of scope for this dev pass)',
-    };
-  },
+    async updateIssue(externalKeyOrUrl: string, snapshot: TaskSnapshot) {
+      const response = await fetch(toApiIssueUrl(externalKeyOrUrl, repo), {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify(toIssueBody(snapshot)),
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub updateIssue failed with status ${response.status}`);
+      }
+    },
 
-  async closeIssue() {
-    return {
-      ok: false,
-      error: 'GitHub integration not implemented yet (T-5 is out of scope for this dev pass)',
-    };
-  },
-};
+    async closeIssue(externalKeyOrUrl: string) {
+      const response = await fetch(toApiIssueUrl(externalKeyOrUrl, repo), {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ state: "closed" }),
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub closeIssue failed with status ${response.status}`);
+      }
+    },
+  };
+}
+
+/** Converts a stored html_url (e.g. https://github.com/org/repo/issues/42) back to the API URL. */
+function toApiIssueUrl(externalKeyOrUrl: string, repo: string): string {
+  const match = externalKeyOrUrl.match(/\/issues\/(\d+)$/);
+  const issueNumber = match ? match[1] : externalKeyOrUrl;
+  return `${GITHUB_API_BASE_URL}/repos/${repo}/issues/${issueNumber}`;
+}
+
+/**
+ * Lazily constructed singleton used by the worker process. Returns null when GitHub is not
+ * configured, so the worker can skip starting this provider's lane without crashing
+ * (architecture §6 step 6 — partial provider configuration).
+ */
+let cachedProvider: SyncProviderClient | null = null;
+export function getGithubProvider(): SyncProviderClient | null {
+  if (!isGithubConfigured()) return null;
+  if (!cachedProvider) {
+    cachedProvider = createGithubProvider(
+      process.env.GITHUB_TOKEN as string,
+      process.env.GITHUB_REPO as string,
+    );
+  }
+  return cachedProvider;
+}

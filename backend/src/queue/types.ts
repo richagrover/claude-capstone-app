@@ -1,20 +1,25 @@
-import type { TaskSyncPayload } from './providerInterface';
+import type { SyncProvider, TaskPriority, TaskStatus } from "@prisma/client";
 
-export type SyncOperation = 'create' | 'update' | 'close';
-export type SyncProviderName = 'jira' | 'github';
-
-export interface SyncJobInput {
-  taskId: string;
-  operation: SyncOperation;
-  /**
-   * Snapshot of the task's mapped fields captured at enqueue time. Required
-   * (rather than re-fetching by taskId when the job runs) because the
-   * "close" job for a deleted task runs after the Task row is already gone
-   * — see phase-02-architecture.md Data Model section.
-   */
-  snapshot: TaskSyncPayload;
+/** The sync-relevant subset of a Task, captured at enqueue time. */
+export interface TaskSnapshot {
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee: string | null;
+  labels: string[];
 }
 
-export interface SyncJobData extends SyncJobInput {
-  provider: SyncProviderName;
+export type SyncOperation = "create" | "update" | "close";
+
+/**
+ * Job payload for a single provider sync job.
+ *
+ * `snapshot` is captured at enqueue time (architecture §6 step 2) so a `close` job — enqueued
+ * right after a task delete — never needs to re-read a `Task` row that may already be gone.
+ */
+export interface SyncJobPayload {
+  taskId: string;
+  provider: SyncProvider;
+  operation: SyncOperation;
+  snapshot: TaskSnapshot;
 }

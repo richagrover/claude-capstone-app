@@ -1,80 +1,133 @@
-import { TASK_STATUSES, TASK_STATUS_LABELS } from '../types';
-import type { TaskListItem, TaskStatus } from '../types';
-import { SyncBadgeRow } from './SyncBadgeRow';
+import { useMemo, useState } from "react";
+import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from "../hooks/useTasks";
+import type { CreateTaskInput, Task, TaskPriority, TaskStatus } from "../types/task";
+import { TaskCard } from "./TaskCard";
+import { TaskForm } from "./TaskForm";
 
-interface Props {
-  tasks: TaskListItem[];
-  onEdit: (task: TaskListItem) => void;
-  onDelete: (task: TaskListItem) => void;
-  onSelectSync: (task: TaskListItem) => void;
-}
+const BOARD_COLUMNS: TaskStatus[] = ["Backlog", "InProgress", "InReview", "Done"];
+const PAGE_SIZE = 20;
 
-/** T-2: task board with one column per status. */
-export function TaskBoard({ tasks, onEdit, onDelete, onSelectSync }: Props) {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      {TASK_STATUSES.map((status) => (
-        <TaskColumn
-          key={status}
-          status={status}
-          tasks={tasks.filter((t) => t.status === status)}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onSelectSync={onSelectSync}
-        />
-      ))}
-    </div>
+export function TaskBoard() {
+  const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "">("");
+  const [offset, setOffset] = useState(0);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const filters = useMemo(
+    () => ({
+      assignee: assigneeFilter || undefined,
+      priority: priorityFilter || undefined,
+      limit: PAGE_SIZE,
+      offset,
+    }),
+    [assigneeFilter, priorityFilter, offset],
   );
-}
 
-function TaskColumn({
-  status,
-  tasks,
-  onEdit,
-  onDelete,
-  onSelectSync,
-}: { status: TaskStatus; tasks: TaskListItem[] } & Omit<Props, 'tasks'>) {
+  const { data, isLoading, isError } = useTasks(filters);
+  const createTaskMutation = useCreateTask();
+  const updateTaskMutation = useUpdateTask();
+  const deleteTaskMutation = useDeleteTask();
+
+  const tasksByStatus = useMemo(() => {
+    const grouped: Record<TaskStatus, Task[]> = {
+      Backlog: [],
+      InProgress: [],
+      InReview: [],
+      Done: [],
+    };
+    for (const task of data?.tasks ?? []) {
+      grouped[task.status].push(task);
+    }
+    return grouped;
+  }, [data]);
+
+  function handleCreateOrUpdate(input: CreateTaskInput) {
+    if (editingTask) {
+      updateTaskMutation.mutate({ id: editingTask.id, patch: input });
+      setEditingTask(null);
+    } else {
+      createTaskMutation.mutate(input);
+      setIsCreating(false);
+    }
+  }
+
+  if (isLoading) return <p>Loading tasks…</p>;
+  if (isError) return <p role="alert">Failed to load tasks.</p>;
+
   return (
-    <div className="bg-gray-50 rounded-lg p-3 min-h-[200px]">
-      <h3 className="font-semibold text-sm text-gray-700 mb-2">
-        {TASK_STATUS_LABELS[status]} ({tasks.length})
-      </h3>
-      <div className="space-y-2">
-        {tasks.map((task) => (
-          <div key={task.id} className="bg-white rounded shadow-sm p-3 border">
-            <div className="flex justify-between items-start gap-2">
-              <h4 className="font-medium text-sm">{task.title}</h4>
-              <span className="text-xs text-gray-500 whitespace-nowrap">{task.priority}</span>
-            </div>
-            {task.description && (
-              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
-            )}
-            <div className="text-xs text-gray-500 mt-1">
-              {task.assignee ? `Assignee: ${task.assignee}` : 'Unassigned'}
-            </div>
-            {task.labels.length > 0 && (
-              <div className="flex gap-1 flex-wrap mt-1">
-                {task.labels.map((label) => (
-                  <span key={label} className="text-xs bg-gray-100 border rounded px-1">
-                    {label}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="mt-2">
-              <SyncBadgeRow summary={task.syncStatus} onSelect={() => onSelectSync(task)} />
-            </div>
-            <div className="flex gap-3 mt-2 text-xs">
-              <button onClick={() => onEdit(task)} className="text-blue-600 underline">
-                Edit
-              </button>
-              <button onClick={() => onDelete(task)} className="text-red-600 underline">
-                Delete
-              </button>
-            </div>
+    <div data-testid="task-board">
+      <div className="task-board-filters">
+        <input
+          placeholder="Filter by assignee"
+          value={assigneeFilter}
+          onChange={(e) => {
+            setAssigneeFilter(e.target.value);
+            setOffset(0);
+          }}
+        />
+        <select
+          value={priorityFilter}
+          onChange={(e) => {
+            setPriorityFilter(e.target.value as TaskPriority | "");
+            setOffset(0);
+          }}
+        >
+          <option value="">All priorities</option>
+          <option value="Low">Low</option>
+          <option value="Medium">Medium</option>
+          <option value="High">High</option>
+        </select>
+        <button type="button" onClick={() => setIsCreating(true)}>
+          New Task
+        </button>
+      </div>
+
+      {isCreating || editingTask ? (
+        <TaskForm
+          initialTask={editingTask ?? undefined}
+          onSubmit={handleCreateOrUpdate}
+          onCancel={() => {
+            setIsCreating(false);
+            setEditingTask(null);
+          }}
+        />
+      ) : null}
+
+      <div className="task-board-columns">
+        {BOARD_COLUMNS.map((column) => (
+          <div key={column} className="task-board-column" data-testid={`column-${column}`}>
+            <h3>{column}</h3>
+            {tasksByStatus[column].map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                onEdit={setEditingTask}
+                onDelete={(id) => deleteTaskMutation.mutate(id)}
+              />
+            ))}
           </div>
         ))}
-        {tasks.length === 0 && <p className="text-xs text-gray-400">No tasks</p>}
+      </div>
+
+      <div className="task-board-pagination">
+        <button
+          type="button"
+          disabled={offset === 0}
+          onClick={() => setOffset((prev) => Math.max(prev - PAGE_SIZE, 0))}
+        >
+          Previous
+        </button>
+        <span>
+          Showing {offset + 1}–{offset + (data?.tasks.length ?? 0)} of {data?.total ?? 0}
+        </span>
+        <button
+          type="button"
+          disabled={!data || offset + PAGE_SIZE >= data.total}
+          onClick={() => setOffset((prev) => prev + PAGE_SIZE)}
+        >
+          Next
+        </button>
       </div>
     </div>
   );

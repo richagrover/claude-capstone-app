@@ -1,10 +1,12 @@
-import 'dotenv/config';
-import { createApp } from './app';
+/** HTTP server entrypoint. Separate process from the queue workers (see worker-main.ts). */
+import { createApp } from "./app";
 
-const port = Number(process.env.PORT ?? 4000);
+const DEFAULT_PORT = 3000;
+const port = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : DEFAULT_PORT;
+
 const app = createApp();
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console
-  console.log(`Task Manager API listening on :${port}`);
+  console.log(`Task Manager backend listening on port ${port}`);
 });

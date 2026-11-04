@@ -1,0 +1,46 @@
+{
+  "key": "MDP-7",
+  "summary": "Build Task Manager Application with Agentic SDLC Sync",
+  "issueType": "Idea",
+  "status": "Parking lot",
+  "priority": "Medium",
+  "reporter": "richa grover",
+  "created": "2026-10-26T14:40:22.282+0530",
+  "description": "Implement an enterprise-grade task manager application with automated SDLC documentation sync.\n\nAs an engineering team, we want to establish a secure, modular, and automated SDLC workflow using structured agents and strict quality rules, so that we can streamline software delivery and maintain repository integrity.",
+  "scope": [
+    "Modular Agent-based Architecture (.claude/ structure)",
+    "Execution Strategy: 8 sequential pipeline phases"
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "category": "Functional Requirements",
+      "text": "All 8 SDLC phases (.claude/agents/) must be mapped to their respective artifact files (docs/MDP-7/)."
+    },
+    {
+      "id": "AC-2",
+      "category": "Functional Requirements",
+      "text": "Pipeline state transitions must be tracked with persistence checks in docs/MDP-7/pipeline-state.json."
+    },
+    {
+      "id": "AC-3",
+      "category": "Security & Governance Rules",
+      "text": "Hardcoded secrets, API tokens, or sensitive credentials are strictly prohibited in source code or artifacts."
+    },
+    {
+      "id": "AC-4",
+      "category": "Security & Governance Rules",
+      "text": "Direct commits to the main branch are not allowed; proper feature branching must be followed."
+    },
+    {
+      "id": "AC-5",
+      "category": "Quality & Verification Checkpoints",
+      "text": "After the implementation phase, test suites must be run and verification output must be saved in 07-verification-report.md."
+    },
+    {
+      "id": "AC-6",
+      "category": "Quality & Verification Checkpoints",
+      "text": "The final step must produce a clean Pull Request summary."
+    }
+  ]
+}
