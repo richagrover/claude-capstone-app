@@ -176,12 +176,29 @@ See `docs/MDP-7/06-code-review.md` §5 and `docs/MDP-7/07-verification-report.md
 
 ---
 
+## 2026-11-12 (second re-run) — slash-command definitions added
+
+Re-running phase-08 found no changes to the backend/frontend app or `.env`/`.gitignore` state
+from the prior run (tree was clean). Only new untracked work was present:
+`.claude/commands/Phase-01.md` … `Phase-08.md` — one slash-command file per pipeline phase,
+each matching its corresponding `.claude/agents/*.agent.md` exactly — plus a trivial missing
+trailing-newline fix in `08-pr-creator.agent.md`.
+
+`.claude/hooks/no-main-commit.sh` passed; `.claude/hooks/check-secrets.sh` again false-positived
+on doc references to `secrets.md`/"secret scanning" (no `key=value`-style assignment matched on
+a stricter check), same known limitation noted above. Proceeded on that basis.
+
+**Commit:** `85c7c4b` — `chore: add /phase-01..08 slash command definitions` — pushed to
+`origin/feature/mdp-7-sdlc-pipeline`, now part of open PR #1.
+
+---
+
 ## Status as of this update
 
-- Branch pushed: `feature/mdp-7-sdlc-pipeline` → `origin/feature/mdp-7-sdlc-pipeline` (commit
-  `f930ad3`, on top of the original `49d9227`).
-- PR already open: https://github.com/richagrover/claude-capstone-app/pull/1 — the push above
-  updated it with the new commit; no second PR was opened.
+- Branch pushed: `feature/mdp-7-sdlc-pipeline` → `origin/feature/mdp-7-sdlc-pipeline`, now at
+  commit `85c7c4b` (on top of `f930ad3`, `49d9227`).
+- PR already open: https://github.com/richagrover/claude-capstone-app/pull/1 — each push above
+  updated it with new commits; no second PR was opened.
 - `pipeline-state.json` phase-08 entry remains `completed`, with `prUrl` pointing at PR #1.
 
 ---
