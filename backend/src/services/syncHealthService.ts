@@ -1,62 +1,135 @@
-import { prisma } from '../db';
+/**
+ * Sync-health aggregation (resolves B-1: grouped aggregate backed by SyncLink(provider,
+ * lastStatus) index, plus a short in-memory TTL cache to absorb bursty polling).
+ */
+import type { SyncProvider } from "@prisma/client";
+import { prisma } from "../db";
+import { configuredProviders } from "../queue/enqueueSync";
 
-export interface SyncHealth {
-  counts: { synced: number; pending: number; failed: number };
-  failing: Array<{
-    taskId: string;
-    provider: string;
-    lastError: string | null;
-    lastSyncedAt: Date | null;
-    externalKeyOrUrl: string | null;
-  }>;
+export const SYNC_HEALTH_CACHE_TTL_MS = 5000;
+const FAILING_LIST_PAGE_SIZE = 50;
+
+export interface ProviderCounts {
+  ok: number;
+  failed: number;
+  pending: number;
 }
 
-const PROVIDERS_PER_TASK = 2; // jira + github
+export interface FailingTaskSummary {
+  taskId: string;
+  provider: SyncProvider;
+  lastError: string | null;
+}
 
-/**
- * GET /api/sync-health — computed entirely from SyncLink (never re-queries
- * Jira/GitHub live), per phase-02-architecture.md "Sync-Health Dashboard".
- */
-export async function getSyncHealth(): Promise<SyncHealth> {
-  const links = await prisma.syncLink.findMany();
+export interface SyncHealthResult {
+  counts: ProviderCounts;
+  byProvider: Record<string, ProviderCounts>;
+  failing: FailingTaskSummary[];
+}
 
-  let synced = 0;
-  let failed = 0;
-  const failing: SyncHealth['failing'] = [];
+type CacheEntry = { expiresAt: number; value: SyncHealthResult };
+const cache = new Map<string, CacheEntry>();
 
-  for (const link of links) {
-    if (link.lastStatus === 'ok') {
-      synced += 1;
-    } else if (link.lastStatus === 'failed') {
-      failed += 1;
-      failing.push({
-        taskId: link.taskId,
-        provider: link.provider,
-        lastError: link.lastError,
-        lastSyncedAt: link.lastSyncedAt,
-        externalKeyOrUrl: link.externalKeyOrUrl,
-      });
+function cacheKey(provider?: SyncProvider): string {
+  return provider ?? "__all__";
+}
+
+/** Exposed for tests only — clears the process-local cache between test cases. */
+export function clearSyncHealthCache(): void {
+  cache.clear();
+}
+
+function emptyCounts(): ProviderCounts {
+  return { ok: 0, failed: 0, pending: 0 };
+}
+
+async function computeSyncHealth(
+  provider?: SyncProvider,
+): Promise<SyncHealthResult> {
+  const providersToReport = provider ? [provider] : configuredProviders();
+
+  const existingTaskIds = (
+    await prisma.task.findMany({ select: { id: true } })
+  ).map((t) => t.id);
+  const existingTaskCount = existingTaskIds.length;
+
+  const byProvider: Record<string, ProviderCounts> = {};
+  for (const p of providersToReport) {
+    byProvider[p] = emptyCounts();
+  }
+
+  if (existingTaskCount > 0) {
+    // Grouped aggregate over SyncLink, scoped to currently-existing tasks only — a deleted
+    // task's stale SyncLink row must never count toward the denominator (architecture §4).
+    const grouped = await prisma.syncLink.groupBy({
+      by: ["provider", "lastStatus"],
+      where: { taskId: { in: existingTaskIds } },
+      _count: { _all: true },
+    });
+
+    for (const row of grouped) {
+      const bucket = byProvider[row.provider] ?? emptyCounts();
+      if (row.lastStatus === "ok") bucket.ok += row._count._all;
+      else if (row.lastStatus === "failed") bucket.failed += row._count._all;
+      // lastStatus === null rows are jobs enqueued but not yet resolved; folded into "pending"
+      // via the derivation below rather than counted here directly.
+      byProvider[row.provider] = bucket;
+    }
+
+    for (const p of providersToReport) {
+      const bucket = byProvider[p] ?? emptyCounts();
+      // "pending" is derived, not stored: expected (existing tasks) minus rows with a
+      // non-null (terminal) lastStatus for this provider (architecture §4).
+      bucket.pending = Math.max(existingTaskCount - bucket.ok - bucket.failed, 0);
+      byProvider[p] = bucket;
     }
   }
 
-  // "pending" = job queued/enqueued, no result (SyncLink row) yet, for a
-  // task that still exists. Every task is expected to eventually have one
-  // SyncLink row per provider (create always enqueues both); until a job
-  // resolves, that (task, provider) pair has no row.
-  //
-  // Scoped to *currently existing* tasks only: a deleted task's SyncLink
-  // rows deliberately outlive the Task row (close-linked-issue flow, see
-  // phase-02-architecture.md Data Model), so they already have a result
-  // (counted in synced/failed above) and must not be allowed to skew this
-  // task-count-based estimate for tasks that still exist.
-  const taskIds = (await prisma.task.findMany({ select: { id: true } })).map((t) => t.id);
-  const taskIdSet = new Set(taskIds);
-  const linksForExistingTasks = links.filter((l) => taskIdSet.has(l.taskId)).length;
-  const expectedLinks = taskIds.length * PROVIDERS_PER_TASK;
-  const pending = Math.max(expectedLinks - linksForExistingTasks, 0);
+  const totals = Object.values(byProvider).reduce<ProviderCounts>(
+    (acc, cur) => ({
+      ok: acc.ok + cur.ok,
+      failed: acc.failed + cur.failed,
+      pending: acc.pending + cur.pending,
+    }),
+    emptyCounts(),
+  );
 
-  return {
-    counts: { synced, pending, failed },
-    failing,
-  };
+  const failingLinks = await prisma.syncLink.findMany({
+    where: {
+      lastStatus: "failed",
+      taskId: { in: existingTaskCount > 0 ? existingTaskIds : [] },
+      ...(provider ? { provider } : {}),
+    },
+    take: FAILING_LIST_PAGE_SIZE,
+  });
+
+  const failing: FailingTaskSummary[] = failingLinks.map((link) => ({
+    taskId: link.taskId,
+    provider: link.provider,
+    lastError: link.lastError,
+  }));
+
+  return { counts: totals, byProvider, failing };
+}
+
+/**
+ * Returns the current sync-health snapshot, optionally filtered to one provider. Backed by a
+ * process-local TTL cache keyed by the provider filter — a few seconds of staleness on a
+ * health/status endpoint is an accepted trade-off (documented in
+ * docs/MDP-7/04-impl-plan.md, GAP-3).
+ */
+export async function getSyncHealth(
+  provider?: SyncProvider,
+): Promise<SyncHealthResult> {
+  const key = cacheKey(provider);
+  const cached = cache.get(key);
+  const now = Date.now();
+
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const value = await computeSyncHealth(provider);
+  cache.set(key, { value, expiresAt: now + SYNC_HEALTH_CACHE_TTL_MS });
+  return value;
 }

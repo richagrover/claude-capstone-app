@@ -1,0 +1,23 @@
+{
+  "pipelineId": "MDP-7",
+  "storyKey": "MDP-7",
+  "branch": "feature/mdp-7-sdlc-pipeline",
+  "currentPhase": 8,
+  "status": "completed",
+  "runNumber": 2,
+  "previousRun": { "completedAt": "2026-11-04T15:15:00+05:30", "prUrl": "https://github.com/richagrover/claude-capstone-app/pull/1" },
+  "phases": [
+    { "id": 1, "name": "requirements-analysis", "agent": "requirements-agent", "artifact": "docs/MDP-7/01-requirements.md", "status": "completed", "startedAt": "2026-11-13T00:00:00+05:30", "completedAt": "2026-11-13T00:05:00+05:30" },
+    { "id": 2, "name": "architecture-design", "agent": "architecture-agent", "artifact": "docs/MDP-7/02-architecture.md", "status": "completed", "startedAt": "2026-11-13T00:05:00+05:30", "completedAt": "2026-11-13T00:10:00+05:30" },
+    { "id": 3, "name": "design-review", "agent": "design-review-agent", "artifact": "docs/MDP-7/03-design-review.md", "status": "completed", "verdict": "approved-with-changes", "startedAt": "2026-11-13T00:10:00+05:30", "completedAt": "2026-11-13T00:15:00+05:30" },
+    { "id": 4, "name": "implementation-planning", "agent": "implementation-planner-agent", "artifact": "docs/MDP-7/04-impl-plan.md", "status": "completed", "startedAt": "2026-11-13T00:15:00+05:30", "completedAt": "2026-11-13T00:20:00+05:30" },
+    { "id": 5, "name": "code-implementation", "agent": "implementation-agent", "artifact": "docs/MDP-7/05-implementation-summary.md", "status": "completed", "startedAt": "2026-11-13T00:20:00+05:30", "completedAt": "2026-11-13T00:30:00+05:30" },
+    { "id": 6, "name": "code-review", "agent": "code-review-agent", "artifact": "docs/MDP-7/06-code-review.md", "status": "completed", "verdict": "pass", "startedAt": "2026-11-13T00:30:00+05:30", "completedAt": "2026-11-13T00:35:00+05:30" },
+    { "id": 7, "name": "verification-testing", "agent": "verification-agent", "artifact": "docs/MDP-7/07-verification-report.md", "status": "completed", "verdict": "pass", "startedAt": "2026-11-13T00:35:00+05:30", "completedAt": "2026-11-13T00:40:00+05:30" },
+    { "id": 8, "name": "pr-creation", "agent": "pr-creator-agent", "artifact": "docs/MDP-7/08-pr-summary.md", "status": "completed", "prUrl": "https://github.com/richagrover/claude-capstone-app/pull/1", "startedAt": "2026-11-13T00:40:00+05:30", "completedAt": "2026-11-13T00:55:00+05:30", "lastPushedAt": "2026-11-13T00:55:00+05:30", "lastCommit": "b8ce9e1" }
+  ],
+  "humanCheckpoints": [
+    { "afterPhase": 3, "label": "Design approval before implementation begins", "status": "approved", "approvedAt": "2026-11-13T00:15:00+05:30", "note": "User directed orchestrator to proceed through all remaining phases without further pausing; design-review verdict was approved-with-changes (B-5/S-4, SEC-6, B-6 carried forward to implementation planning, none blocking)." }
+  ],
+  "lastUpdated": "2026-11-13T00:55:00+05:30"
+}

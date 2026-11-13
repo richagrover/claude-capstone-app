@@ -1,21 +1,85 @@
-import express from 'express';
-import cors from 'cors';
-import { tasksRouter } from './routes/tasks';
-import { syncHealthRouter } from './routes/syncHealth';
-import { errorHandler } from './errorHandler';
+/**
+ * Express app wiring: middleware, routes, centralized error handler (mounted last).
+ *
+ * Cross-cutting hardening (resolves SEC-2, SEC-3):
+ *  - CORS: single-origin allowlist from FRONTEND_ORIGIN, no wildcard, no credentials (no
+ *    auth/cookies in scope per the design review's SEC-1 out-of-scope decision).
+ *  - Payload size limit on the JSON body parser.
+ *  - Rate limiting on /api, defense-in-depth, returning the same structured error shape.
+ */
+import express, { type Express } from "express";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import { tasksRouter } from "./routes/tasks";
+import { syncHealthRouter } from "./routes/syncHealth";
+import { AppError, errorHandler, notFoundHandler } from "./errorHandler";
 
-export function createApp() {
+const JSON_BODY_LIMIT = "100kb";
+export const RATE_LIMIT_WINDOW_MS = 60_000;
+export const RATE_LIMIT_MAX_REQUESTS = 100;
+
+/**
+ * Parses TRUST_PROXY into the shape Express's "trust proxy" setting expects. Defaults to
+ * `false` (do not trust any proxy) — safe for direct-connect local/dev, which is this app's
+ * default/test topology (resolves SEC-6).
+ */
+function parseTrustProxySetting(raw: string | undefined): boolean | number {
+  if (raw === undefined || raw === "") return false;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  const hops = Number(raw);
+  if (!Number.isNaN(hops) && Number.isInteger(hops) && hops >= 0) return hops;
+  // Unrecognized value: fail safe rather than silently trusting an unvalidated proxy chain.
+  throw new AppError(500, "invalid_trust_proxy_config", `Invalid TRUST_PROXY value: "${raw}"`);
+}
+
+export function createApp(): Express {
   const app = express();
 
-  app.use(cors({ origin: process.env.CORS_ORIGIN ?? '*' }));
-  app.use(express.json());
+  app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
 
-  app.get('/health', (_req, res) => res.json({ ok: true }));
+  const allowedOrigin = process.env.FRONTEND_ORIGIN;
+  app.use(
+    cors({
+      origin: (requestOrigin, callback) => {
+        // No Origin header (e.g. server-to-server, curl) is allowed through; browsers always
+        // send Origin for cross-origin fetch/XHR, so this does not weaken the browser-enforced
+        // single-origin allowlist below.
+        if (!requestOrigin || requestOrigin === allowedOrigin) {
+          callback(null, true);
+          return;
+        }
+        callback(new AppError(403, "cors_rejected", "Origin not allowed."));
+      },
+      credentials: false,
+      methods: ["GET", "POST", "PATCH", "DELETE"],
+    }),
+  );
 
-  // REST API surface per docs/artifacts/MDP-7/phase-02-architecture.md
-  app.use('/api/tasks', tasksRouter);
-  app.use('/api/sync-health', syncHealthRouter);
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
+  const apiRateLimiter = rateLimit({
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_MAX_REQUESTS,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (_req, res) => {
+      res.status(429).json({
+        error: "rate_limited",
+        message: "Too many requests. Please try again later.",
+      });
+    },
+  });
+  app.use("/api", apiRateLimiter);
+
+  app.get("/health", (_req, res) => {
+    res.status(200).json({ status: "ok" });
+  });
+
+  app.use("/api/tasks", tasksRouter);
+  app.use("/api/sync-health", syncHealthRouter);
+
+  app.use(notFoundHandler);
   app.use(errorHandler);
 
   return app;

@@ -1,121 +1,188 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock('../db', () => ({
-  prisma: {
+// vi.mock(...) factories are hoisted above the rest of this module, so any variable they
+// close over must be created inside vi.hoisted() — otherwise it is accessed in its TDZ
+// (ReferenceError: "Cannot access '<name>' before initialization").
+const { mockPrisma, enqueueSyncForAllProviders } = vi.hoisted(() => ({
+  mockPrisma: {
     task: {
-      create: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
       findUnique: vi.fn(),
+      create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
+    syncLink: {
+      findMany: vi.fn(),
+    },
   },
+  enqueueSyncForAllProviders: vi.fn(),
 }));
 
-vi.mock('../queue/queues', () => ({
-  enqueueSyncJob: vi.fn().mockResolvedValue(undefined),
+vi.mock("../db", () => ({ prisma: mockPrisma }));
+
+vi.mock("../queue/enqueueSync", () => ({
+  enqueueSyncForAllProviders: (...args: unknown[]) =>
+    enqueueSyncForAllProviders(...args),
 }));
 
-import { prisma } from '../db';
-import { enqueueSyncJob } from '../queue/queues';
-import { createTask, deleteTask, updateTask } from '../services/taskService';
+// Imported after the mocks above are registered.
+import {
+  createTask,
+  deleteTask,
+  getTask,
+  listTasks,
+  updateTask,
+} from "../services/taskService";
 
-function makeTask(overrides: Partial<Record<string, unknown>> = {}) {
-  return {
-    id: 'task-1',
-    title: 'A task',
-    description: 'old description',
-    status: 'Backlog',
-    priority: 'Medium',
-    assignee: null,
-    dueDate: null,
-    labels: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    ...overrides,
-  };
-}
+const SAMPLE_TASK = {
+  id: "123e4567-e89b-42d3-a456-556642440000",
+  title: "Fix the bug",
+  description: null,
+  status: "Backlog",
+  priority: "Medium",
+  assignee: null,
+  dueDate: null,
+  labels: [],
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('TC-10: updating an unmapped field does not enqueue a sync job', () => {
-  it('description-only change does not call enqueueSyncJob', async () => {
-    const existing = makeTask();
-    const updated = makeTask({ description: 'new description' });
-    (prisma.task.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(existing);
-    (prisma.task.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated);
+describe("listTasks", () => {
+  it("returns tasks with derived syncStatus and clamps pagination", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([SAMPLE_TASK]);
+    mockPrisma.task.count.mockResolvedValue(1);
+    mockPrisma.syncLink.findMany.mockResolvedValue([
+      { taskId: SAMPLE_TASK.id, provider: "github", lastStatus: "ok" },
+    ]);
 
-    await updateTask('task-1', { description: 'new description' });
+    const result = await listTasks({ limit: 500, offset: -10 });
 
-    expect(enqueueSyncJob).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 200, skip: 0 }),
+    );
+    expect(result.tasks[0].syncStatus).toEqual([{ provider: "github", status: "ok" }]);
+    expect(result.total).toBe(1);
   });
 
-  it('(supporting case) a mapped field change does enqueue a sync job', async () => {
-    const existing = makeTask({ priority: 'Low' });
-    const updated = makeTask({ priority: 'High' });
-    (prisma.task.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(existing);
-    (prisma.task.update as ReturnType<typeof vi.fn>).mockResolvedValue(updated);
+  it("returns an empty tasks array when there are no matches", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
 
-    await updateTask('task-1', { priority: 'High' });
+    const result = await listTasks({});
+    expect(result.tasks).toEqual([]);
+    expect(mockPrisma.syncLink.findMany).not.toHaveBeenCalled();
+  });
 
-    expect(enqueueSyncJob).toHaveBeenCalledWith(expect.objectContaining({ operation: 'update' }));
+  it("marks a link with a null lastStatus as pending", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([SAMPLE_TASK]);
+    mockPrisma.task.count.mockResolvedValue(1);
+    mockPrisma.syncLink.findMany.mockResolvedValue([
+      { taskId: SAMPLE_TASK.id, provider: "jira", lastStatus: null },
+    ]);
+
+    const result = await listTasks({});
+    expect(result.tasks[0].syncStatus).toEqual([{ provider: "jira", status: "pending" }]);
   });
 });
 
-describe('TC-17: delete task with no existing SyncLink (never synced)', () => {
-  it('still enqueues a close job, but the job itself no-ops (see workers.success.test.ts) — net effect is a clean delete with no external call', async () => {
-    // NOTE: This updates the checklist's original expected behavior
-    // ("No close job enqueued") to match the actual implementation
-    // ("always enqueue; the worker no-ops when there's no SyncLink").
-    // taskService has no way to cheaply know, at delete time, whether a
-    // SyncLink exists without an extra query — the implementation instead
-    // always enqueues and lets the (idempotent) worker decide. The task
-    // row removal itself is unconditional and clean either way.
-    const existing = makeTask();
-    (prisma.task.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(existing);
-    (prisma.task.delete as ReturnType<typeof vi.fn>).mockResolvedValue(existing);
+describe("getTask", () => {
+  it("returns null when the task does not exist", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(null);
+    const result = await getTask(SAMPLE_TASK.id);
+    expect(result).toBeNull();
+  });
 
-    const result = await deleteTask('task-1');
+  it("returns the task with its full syncLinks projection", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(SAMPLE_TASK);
+    mockPrisma.syncLink.findMany.mockResolvedValue([
+      {
+        provider: "github",
+        externalKeyOrUrl: "https://github.com/org/repo/issues/1",
+        lastSyncedAt: new Date(),
+        lastStatus: "ok",
+        lastError: null,
+      },
+    ]);
 
-    expect(result).toEqual(existing);
-    expect(prisma.task.delete).toHaveBeenCalledWith({ where: { id: 'task-1' } });
-    expect(enqueueSyncJob).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'task-1', operation: 'close' })
+    const result = await getTask(SAMPLE_TASK.id);
+    expect(result?.syncLinks).toHaveLength(1);
+    expect(result?.syncLinks[0].provider).toBe("github");
+  });
+});
+
+describe("createTask", () => {
+  it("creates a task and enqueues a create sync job for every configured provider", async () => {
+    mockPrisma.task.create.mockResolvedValue(SAMPLE_TASK);
+
+    const result = await createTask({ title: "Fix the bug" });
+
+    expect(mockPrisma.task.create).toHaveBeenCalled();
+    expect(enqueueSyncForAllProviders).toHaveBeenCalledWith(
+      SAMPLE_TASK.id,
+      "create",
+      expect.objectContaining({ title: "Fix the bug" }),
+    );
+    expect(result).toEqual(SAMPLE_TASK);
+  });
+});
+
+describe("updateTask", () => {
+  it("returns null when the task does not exist", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(null);
+    const result = await updateTask(SAMPLE_TASK.id, { title: "New title" });
+    expect(result).toBeNull();
+    expect(enqueueSyncForAllProviders).not.toHaveBeenCalled();
+  });
+
+  it("enqueues an update job when a sync-relevant field changes", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(SAMPLE_TASK);
+    mockPrisma.task.update.mockResolvedValue({ ...SAMPLE_TASK, status: "InProgress" });
+
+    await updateTask(SAMPLE_TASK.id, { status: "InProgress" as never });
+
+    expect(enqueueSyncForAllProviders).toHaveBeenCalledWith(
+      SAMPLE_TASK.id,
+      "update",
+      expect.objectContaining({ status: "InProgress" }),
     );
   });
 
-  it('returns null for a task that does not exist (no delete, no enqueue)', async () => {
-    (prisma.task.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    const result = await deleteTask('missing');
-    expect(result).toBeNull();
-    expect(prisma.task.delete).not.toHaveBeenCalled();
-    expect(enqueueSyncJob).not.toHaveBeenCalled();
+  it("does not enqueue a sync job when no sync-relevant field changes", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(SAMPLE_TASK);
+    mockPrisma.task.update.mockResolvedValue(SAMPLE_TASK);
+
+    await updateTask(SAMPLE_TASK.id, { dueDate: undefined });
+
+    expect(enqueueSyncForAllProviders).not.toHaveBeenCalled();
   });
 });
 
-describe('TC-21: task request completes without waiting on job execution', () => {
-  it('createTask resolves before the (async) sync job has actually run', async () => {
-    const created = makeTask();
-    (prisma.task.create as ReturnType<typeof vi.fn>).mockResolvedValue(created);
+describe("deleteTask", () => {
+  it("is idempotent: deleting a missing task does not throw or enqueue", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(null);
 
-    let jobExecuted = false;
-    (enqueueSyncJob as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      // Simulates the real split: enqueueSyncJob (a BullMQ Queue.add call)
-      // resolves fast once the job is queued; actual job *execution*
-      // (processSyncJob calling out to Jira/GitHub) happens later, on a
-      // worker, and is never awaited by the request path.
-      setTimeout(() => {
-        jobExecuted = true;
-      }, 50);
-    });
+    await expect(deleteTask(SAMPLE_TASK.id)).resolves.toBeUndefined();
+    expect(mockPrisma.task.delete).not.toHaveBeenCalled();
+    expect(enqueueSyncForAllProviders).not.toHaveBeenCalled();
+  });
 
-    await createTask({ title: 'fast request' });
+  it("deletes an existing task and enqueues a close job using a pre-delete snapshot", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(SAMPLE_TASK);
+    mockPrisma.task.delete.mockResolvedValue(SAMPLE_TASK);
 
-    // The request-side promise has already resolved; the job has not run.
-    expect(jobExecuted).toBe(false);
+    await deleteTask(SAMPLE_TASK.id);
 
-    await new Promise((resolve) => setTimeout(resolve, 75));
-    expect(jobExecuted).toBe(true);
+    expect(mockPrisma.task.delete).toHaveBeenCalledWith({ where: { id: SAMPLE_TASK.id } });
+    expect(enqueueSyncForAllProviders).toHaveBeenCalledWith(
+      SAMPLE_TASK.id,
+      "close",
+      expect.objectContaining({ title: SAMPLE_TASK.title }),
+    );
   });
 });

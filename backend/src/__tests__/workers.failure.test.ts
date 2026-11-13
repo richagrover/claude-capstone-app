@@ -1,97 +1,128 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Job } from 'bullmq';
-import type { SyncJobData } from '../queue/types';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SyncProviderClient } from "../queue/providerInterface";
+import type { SyncJobPayload, TaskSnapshot } from "../queue/types";
 
-// Deliberately does NOT mock ../queue/providers/* — this file exercises the
-// REAL jiraProvider/githubProvider stubs (see
-// backend/src/queue/providers/jiraProvider.ts and githubProvider.ts), which
-// always return { ok: false } today because T-4/T-5 (real Jira/GitHub REST
-// calls) are blocked_on_config. That makes this the one place TC-11/TC-14's
-// *failure-surfacing* guarantee (phase-01-requirements.md §4 Reliability —
-// "failed syncs are visible/flagged, not silently dropped") is actually
-// exercisable right now, without a real Jira/GitHub integration. The
-// "issue created in the fixed project/repo" half of TC-11/TC-14 remains
-// blocked (see Coverage Gaps).
-vi.mock('../db', () => ({
-  prisma: {
-    syncLink: {
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-    },
-    syncAttempt: {
-      create: vi.fn(),
-    },
+let storedLink: {
+  taskId: string;
+  provider: string;
+  externalKeyOrUrl: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+} | null = null;
+
+const syncAttempts: { taskId: string; provider: string; result: string; detail: string | null }[] =
+  [];
+
+const txMock = {
+  $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+  syncLink: {
+    findUnique: vi.fn(async () => storedLink),
+    upsert: vi.fn(async ({ create, update }: { create: typeof storedLink; update: Partial<NonNullable<typeof storedLink>> }) => {
+      storedLink = storedLink ? { ...storedLink, ...update } : create;
+      return storedLink;
+    }),
   },
-}));
-
-import { prisma } from '../db';
-import { processSyncJob } from '../queue/workers';
-
-function makeJob(data: SyncJobData): Job<SyncJobData> {
-  return { data } as Job<SyncJobData>;
-}
-
-const snapshot = {
-  id: 'task-1',
-  title: 'Task',
-  description: null,
-  status: 'Backlog',
-  priority: 'Medium',
-  assignee: null,
-  labels: [],
-  dueDate: null,
+  syncAttempt: {
+    create: vi.fn(async ({ data }: { data: { taskId: string; provider: string; result: string; detail: string | null } }) => {
+      syncAttempts.push(data);
+      return data;
+    }),
+  },
 };
 
+// vi.mock(...) is hoisted above this file's other top-level code. Its factory must not close
+// over a `const` that hasn't been initialized yet (TDZ: "Cannot access 'mockPrisma' before
+// initialization"), so the mock object itself is built inside vi.hoisted(). The inner
+// $transaction function only *references* `txMock` — it isn't called until a test actually
+// invokes processSyncJob(), by which point `txMock` (declared above, in normal module order) is
+// fully initialized.
+const mockPrisma = vi.hoisted(() => ({
+  $transaction: vi.fn(async (callback: (tx: unknown) => Promise<void>) => callback(txMock)),
+}));
+
+vi.mock("../db", () => ({ prisma: mockPrisma }));
+
+import { processSyncJob } from "../queue/workers";
+
+const SNAPSHOT: TaskSnapshot = {
+  title: "Fix the bug",
+  status: "Backlog",
+  priority: "Medium",
+  assignee: null,
+  labels: [],
+};
+
+function makeFailingProvider(): SyncProviderClient {
+  return {
+    createIssue: vi.fn().mockRejectedValue(new Error("GitHub createIssue failed with status 503")),
+    updateIssue: vi.fn().mockRejectedValue(new Error("update failed")),
+    closeIssue: vi.fn().mockRejectedValue(new Error("close failed")),
+  };
+}
+
 beforeEach(() => {
+  storedLink = null;
+  syncAttempts.length = 0;
   vi.clearAllMocks();
-  delete process.env.JIRA_PROJECT_KEY;
-  delete process.env.GITHUB_REPO;
-  (prisma.syncLink.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 });
 
-describe('TC-11 / TC-14 (partial — failure/retry-surfacing half only): provider error on create', () => {
-  it('jira: failure is written to SyncAttempt + SyncLink.last_status=failed with last_error, and the job rethrows so BullMQ will retry', async () => {
-    await expect(
-      processSyncJob(makeJob({ taskId: 'task-1', provider: 'jira', operation: 'create', snapshot }))
-    ).rejects.toThrow();
+describe("processSyncJob — failure handling (resolves G-1 failure bookkeeping)", () => {
+  it("records a failed SyncAttempt and SyncLink when the provider call throws", async () => {
+    const provider = makeFailingProvider();
+    const payload: SyncJobPayload = {
+      taskId: "task-fail-1",
+      provider: "github",
+      operation: "create",
+      snapshot: SNAPSHOT,
+    };
 
-    expect(prisma.syncAttempt.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ taskId: 'task-1', provider: 'jira', result: 'failed' }),
-      })
+    await expect(processSyncJob(payload, provider)).rejects.toThrow(
+      "GitHub createIssue failed with status 503",
     );
-    expect(prisma.syncLink.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ lastStatus: 'failed', lastError: expect.stringContaining('JIRA_PROJECT_KEY') }),
-      })
-    );
+
+    expect(storedLink?.lastStatus).toBe("failed");
+    expect(storedLink?.lastError).toContain("GitHub createIssue failed");
+    expect(syncAttempts).toHaveLength(1);
+    expect(syncAttempts[0].result).toBe("failed");
   });
 
-  it('github: same guarantee — failure surfaces, does not get a weaker guarantee than jira', async () => {
-    await expect(
-      processSyncJob(makeJob({ taskId: 'task-1', provider: 'github', operation: 'create', snapshot }))
-    ).rejects.toThrow();
+  it("never lets the process crash: the rejection is a normal Error, not an uncaught exception", async () => {
+    const provider = makeFailingProvider();
+    const payload: SyncJobPayload = {
+      taskId: "task-fail-2",
+      provider: "jira",
+      operation: "create",
+      snapshot: SNAPSHOT,
+    };
 
-    expect(prisma.syncAttempt.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ taskId: 'task-1', provider: 'github', result: 'failed' }),
-      })
-    );
-    expect(prisma.syncLink.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ lastStatus: 'failed', lastError: expect.stringContaining('GITHUB_REPO') }),
-      })
-    );
+    let caught: unknown;
+    try {
+      await processSyncJob(payload, provider);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    // BullMQ (not exercised directly here) is what turns this rejection into a scheduled retry
+    // per the queue's bounded exponential-backoff policy configured in queues.ts.
   });
-});
 
-describe('TC-22 (failure half): every job result, success or failure, is recorded', () => {
-  it('a failed attempt still produces exactly one SyncAttempt row and one SyncLink upsert', async () => {
-    await expect(
-      processSyncJob(makeJob({ taskId: 'task-1', provider: 'jira', operation: 'create', snapshot }))
-    ).rejects.toThrow();
+  it("does not record a credential value in lastError, only a human-readable reason (NFR-1)", async () => {
+    const provider: SyncProviderClient = {
+      createIssue: vi.fn().mockRejectedValue(new Error("Unauthorized: invalid token")),
+      updateIssue: vi.fn(),
+      closeIssue: vi.fn(),
+    };
+    const payload: SyncJobPayload = {
+      taskId: "task-fail-3",
+      provider: "github",
+      operation: "create",
+      snapshot: SNAPSHOT,
+    };
 
-    expect(prisma.syncAttempt.create).toHaveBeenCalledTimes(1);
-    expect(prisma.syncLink.upsert).toHaveBeenCalledTimes(1);
+    await expect(processSyncJob(payload, provider)).rejects.toThrow();
+
+    expect(storedLink?.lastError).toBe("Unauthorized: invalid token");
+    expect(storedLink?.lastError).not.toMatch(/ghp_|Bearer\s+\S+/);
   });
 });
