@@ -2,148 +2,132 @@
 
 **Story Key:** MDP-7
 **Phase:** 5 — Code Implementation
-**Input:** `docs/MDP-7/04-impl-plan.md` (milestones M0–M14)
-**Status:** Implementation complete; backend and frontend test suites green; builds clean.
+**Run:** 2 (re-run — gap-closure only, per `docs/MDP-7/04-impl-plan.md`)
+**Input:** `docs/MDP-7/04-impl-plan.md` (Run 2 gap-closure plan, GAP-1 … GAP-5)
+**Scope executed:** exactly the plan's five gaps — no other code touched.
 
-This phase resumes a prior run that had already produced most of the application. This record
-covers: (1) what was verified as already implemented per the plan, (2) the root cause and fix for
-the test-run stall encountered previously, (3) the additional fixes made to get both test suites
-and both builds fully green, and (4) what remains deferred per the plan's own scope decisions.
+## Baseline
 
----
+- Before this phase: 75 backend tests + 5 frontend tests passing (per `01-requirements.md` / plan
+  §0).
+- Dependencies were not installed in this working copy (`backend/node_modules`,
+  `frontend/node_modules` absent); ran `npm install` in both `backend/` and `frontend/` before
+  testing/building. No `package.json`/`package-lock.json` changes were made — same dependency
+  versions as already pinned.
 
-## 1. State on resume
+## Files changed
 
-All milestone target files from `04-impl-plan.md` §2 already existed under `backend/` and
-`frontend/` with real implementations (Express/TS/Prisma API, BullMQ queue + per-provider workers,
-GitHub/Jira provider adapters, validation, error handling, CORS/rate-limit/body-size hardening,
-React/Vite task board, sync-health panel, hooks, API client). No milestone required
-re-implementation from scratch. `docs/MDP-7/05-implementation-summary.md` was still empty because
-the previous run stalled before reaching this step.
+### 1. `backend/src/app.ts` — GAP-1 (export) + GAP-2 (trust proxy)
 
-## 2. Root cause of the earlier stall
+- Added `export` to the two existing rate-limit constants (no value change):
+  ```ts
+  export const RATE_LIMIT_WINDOW_MS = 60_000;
+  export const RATE_LIMIT_MAX_REQUESTS = 100;
+  ```
+- Added `parseTrustProxySetting(raw: string | undefined): boolean | number`, a small pure
+  helper that maps `TRUST_PROXY` into Express's `"trust proxy"` setting shape:
+  - unset/empty → `false` (identical to today's behavior — no regression)
+  - `"true"` / `"false"` → boolean
+  - a non-negative integer string → that number (trusted-hop count)
+  - anything else → throws `AppError(500, "invalid_trust_proxy_config", ...)` — fails loudly at
+    app-creation time instead of silently defaulting to an unvalidated value.
+- Called `app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY))` at the top of
+  `createApp()`, before any middleware that reads `req.ip` (CORS, rate limiter).
+- No other line in `app.ts` changed; CORS, body-limit, rate-limiter config, and route mounting are
+  untouched.
 
-**It was not a network hang.** On this run, `npm test` in `backend/` completed in ~1.5 seconds
-with explicit, non-hanging failures — it never blocked waiting on Redis/Postgres. All seven test
-files correctly mock `../db` (Prisma) and `../queue/enqueueSync`; `workers.success.test.ts` /
-`workers.failure.test.ts` only import `processSyncJob`/`getConfiguredConcurrency` from
-`queue/workers.ts`, never `createProviderWorker` (the function that actually calls
-`getRedisConnection()`), so no real Redis connection is ever attempted during tests. `connection.ts`
-and `queues.ts` only open connections lazily inside functions that unit tests never invoke.
+### 2. `backend/.env.example` — GAP-2 documentation
 
-**The actual defect:** 5 of 7 backend test files failed immediately with
-`ReferenceError: Cannot access '<name>' before initialization`, because `vi.mock(...)` factory
-callbacks referenced module-level `const` objects (`mockPrisma`, `taskService`, `txMock`) declared
-*after* the `vi.mock()` call in file order. Vitest hoists `vi.mock()` calls to the top of the
-module (above all other top-level statements, including `import`s and `const` declarations), so
-the factory ran before those `const`s were initialized, hitting their temporal-dead-zone. This
-produced a vitest error-collection codepath; it's plausible that under the specific prior
-environment/process conditions this surfaced as a stalled run with no flushed output (e.g., a
-worker-pool reporting hiccup) rather than the clean failure list seen here, but the defect itself —
-and the fix — is the same either way: the test files were buggy, not the application code.
+- Added a new `TRUST_PROXY=` line (name only, no value — consistent with the file's existing
+  NFR-1 convention and with the project's credential-handling governance rule) immediately after `FRONTEND_ORIGIN=`, with a comment
+  explaining default behavior, the production value (trusted-hop count), the less-safe `true`
+  option, and the security rationale for not trusting an unvalidated proxy chain.
 
-**Fix:** wrapped every value a `vi.mock()` factory closes over in `vi.hoisted()`, which runs its
-initializer as part of the same hoisting pass, before the factories execute. Updated:
-- `backend/src/__tests__/syncHealthService.test.ts`
-- `backend/src/__tests__/taskService.test.ts`
-- `backend/src/__tests__/tasks.routes.test.ts`
-- `backend/src/__tests__/workers.success.test.ts`
-- `backend/src/__tests__/workers.failure.test.ts`
+### 3. `backend/src/__tests__/app.hardening.test.ts` — GAP-1 + GAP-2 tests
 
-For the two `workers.*.test.ts` files, only the thin `mockPrisma.$transaction` wrapper was moved
-into `vi.hoisted()` (it only *references* `txMock` inside an inner, not-yet-invoked function); the
-richer `txMock`/`storedLink`/`syncAttempt` fixtures stayed as ordinary module-scope declarations
-since they are never touched until a test actually calls `processSyncJob()`, by which point the
-module has fully initialized.
+- Added `import { createApp, RATE_LIMIT_MAX_REQUESTS } from "../app"` (replacing the import that
+  previously brought in only `createApp`) and imported `afterEach` from `vitest`.
+- New `describe("Rate limiting (resolves NFR-8(c) / AC-10)")`: fires `RATE_LIMIT_MAX_REQUESTS`
+  (100) sequential requests against `GET /api/tasks` on one shared `createApp()` instance,
+  asserts none of them is `429`, then asserts the 101st request returns `429` with the exact body
+  the real `app.ts` handler sends — `{ error: "rate_limited", message: "Too many requests. Please
+  try again later." }` — verified against the literal strings in `app.ts`, not a paraphrase.
+- New `describe("Trust proxy configuration (resolves SEC-6)")` with three tests:
+  1. `TRUST_PROXY` unset → `app.get("trust proxy")` is `false` (today's exact behavior, no
+     regression).
+  2. `TRUST_PROXY=1` → `app.get("trust proxy")` is `1`.
+  3. `TRUST_PROXY="not-a-number"` → `createApp()` throws.
+  `afterEach` deletes `process.env.TRUST_PROXY` so the setting doesn't leak into other test
+  files/cases.
 
-No application source files needed changes for this defect — it was entirely confined to the test
-files' mock setup.
+### 4. `backend/src/services/syncHealthService.ts` — GAP-5
 
-## 3. Additional fixes made to reach a fully green state
+- Fixed the stale doc comment on `getSyncHealth` that referenced the previous run's "M7"
+  milestone number (which no longer exists in this document's structure). It now reads:
+  > "...a few seconds of staleness on a health/status endpoint is an accepted trade-off
+  > (documented in docs/MDP-7/04-impl-plan.md, GAP-3)."
+- Comment-only change; no behavior, signature, or logic touched.
 
-Beyond the hoisting bug, `npm run build` (type-check) surfaced two pre-existing strict-mode errors
-that `npm test` doesn't exercise:
+### GAP-3 and GAP-4 — no code change (confirmed)
 
-- **`backend/src/errorHandler.ts`**: `notFoundHandler(req, res)` had an unused `req` parameter,
-  which fails under `noUnusedParameters: true`. Renamed to `_req` (same convention already used
-  elsewhere in the file for the error middleware's unused params).
-- **`frontend/src/api/client.ts`**: `import.meta.env.VITE_API_BASE_URL` failed to type-check
-  because the project had no `vite-env.d.ts`, so TypeScript didn't know `ImportMeta.env` exists.
-  Added `frontend/src/vite-env.d.ts` with the standard `/// <reference types="vite/client" />`
-  plus a typed `ImportMetaEnv`/`ImportMeta` augmentation for `VITE_API_BASE_URL`, matching
-  `frontend/.env.example`'s single documented variable.
+- **GAP-3** (sync-health TTL cache undocumented in architecture): re-confirmed by direct read of
+  `syncHealthService.ts` that `SYNC_HEALTH_CACHE_TTL_MS = 5000` and the per-provider `Map` cache
+  are already implemented correctly. This is a Phase-2 (architecture doc) gap, not a Phase-5 code
+  gap; the plan's §GAP-3 note is the authoritative trade-off record for this run. No action taken
+  here, as directed.
+- **GAP-4** (`failing[]` capped at 50, no pagination): confirmed as an explicitly deferred `Note`
+  per the design review, with no FR/AC requiring it and no observed trigger. No action taken, as
+  directed.
 
-`frontend/node_modules` was not yet installed on resume; ran `npm install` in `frontend/` (305
-packages, no blocking prompts, ~27s) before running its test/build scripts.
+## Credential-hygiene check
 
-## 4. Final verification results
+Ran the project's mandatory pre-commit credential-scanning hook against the staged diff of all four
+changed files (`app.ts`, `app.hardening.test.ts`, `.env.example`, `syncHealthService.ts`): the scan
+completed successfully and reported no hardcoded credential values found.
 
-All commands were run with explicit timeouts (100–180s, well under the 10-minute ceiling) and
-completed normally — none hung.
+`TRUST_PROXY=` was added to `.env.example` with no value, consistent with the file's existing
+"names only" convention and the project's governance rule prohibiting hardcoded credentials.
 
-- **Backend** (`cd backend && npm test`): **7 test files passed, 75/75 tests passed** (1.5s).
-  Covers `validation.ts` (28 tests), `taskService` (11), `syncHealthService` (7),
-  `tasks.routes` (16, Supertest), `workers.success`/`workers.failure` (9 combined), and
-  CORS/payload-size/404 hardening (4) — i.e., every business-logic module named in M9's
-  acceptance criteria.
-- **Backend build** (`npm run build`, `tsc -p tsconfig.json`): clean, no errors.
-- **Frontend** (`cd frontend && npm test`): **2 test files passed, 5/5 tests passed** (2s) —
-  `TaskBoard.test.tsx` (3), `useTasks.test.ts` (2), API layer mocked per M11's acceptance
-  criteria.
-- **Frontend build** (`npm run build`, `tsc -b && vite build`): clean, no type errors; Vite
-  production bundle emitted successfully.
+## Test / build results
 
-No test was skipped, disabled, or weakened to force a pass; both fixes above corrected the actual
-defect (test mock timing, missing ambient types) rather than working around it.
+### Backend (`backend/`)
 
-## 5. Secrets/config hygiene check (secrets.md)
+- `npm test` (vitest): **79 passed** (75 pre-existing + 4 new: 1 rate-limit test + 3 trust-proxy
+  tests), 7 test files, 0 failures.
+- `npm run build` (`tsc -p tsconfig.json`): clean, no errors.
 
-- No `.env` file exists in `backend/` or `frontend/` — only `.env.example` (names only, empty
-  values), as required by NFR-1 and the plan's M1/M10 acceptance criteria.
-- Both `backend/.gitignore` and `frontend/.gitignore` exclude `.env`, `node_modules/`, `dist/`,
-  and build artifacts.
-- `backend/src/db.ts` logs only `["warn", "error"]`, never `"query"`, so bound parameter values
-  (which could include user-supplied task content) are never written to logs.
-- Provider tokens (`GITHUB_TOKEN`, `JIRA_API_TOKEN`) are read once at module load in
-  `queue/providers/*.ts` and never passed to or logged by any other layer.
+### Frontend (`frontend/`)
 
-## 6. Files touched this phase
+- `npm test` (vitest): **5 passed** (unchanged), 2 test files, 0 failures — confirms no regression
+  from backend-only changes.
+- `npm run build` (`tsc -b && vite build`): clean, no errors; Vite production bundle built
+  successfully (85 modules transformed).
 
-All other milestone files (M1–M14) were already present and unchanged by this phase; this phase's
-diff is limited to the fix set below.
+## Acceptance criteria check (against `04-impl-plan.md`)
 
-**Modified:**
-- `backend/src/__tests__/syncHealthService.test.ts` — `vi.hoisted()` fix
-- `backend/src/__tests__/taskService.test.ts` — `vi.hoisted()` fix
-- `backend/src/__tests__/tasks.routes.test.ts` — `vi.hoisted()` fix
-- `backend/src/__tests__/workers.success.test.ts` — `vi.hoisted()` fix
-- `backend/src/__tests__/workers.failure.test.ts` — `vi.hoisted()` fix
-- `backend/src/errorHandler.ts` — unused parameter fix (`req` → `_req`)
+| Plan item | Result |
+|---|---|
+| GAP-1: `RATE_LIMIT_MAX_REQUESTS` exported, new 429-body test added | Done — test passes, asserts exact literal body |
+| GAP-2: `parseTrustProxySetting` + `app.set("trust proxy", ...)`, default unchanged (`false`), invalid input throws, `.env.example` documents name only | Done — 3 new tests pass |
+| GAP-3: no code change, decision already recorded in plan | Confirmed, no action |
+| GAP-4: no code change, deferral already recorded in plan | Confirmed, no action |
+| GAP-5: stale "M7" comment fixed | Done |
+| Full backend suite stays green after changes | 79/79 passing |
+| Backend build clean | `tsc` clean |
+| Frontend unaffected | 5/5 passing, build clean |
 
-**Created:**
-- `frontend/src/vite-env.d.ts` — Vite ambient env types for `import.meta.env`
+## Not done (out of scope / explicitly excluded from this phase)
 
-## 7. Deferred / out of scope (unchanged from `04-impl-plan.md` §0.1)
-
-Carried forward as explicit scope decisions made in Phase 4, not gaps introduced or revisited in
-this phase:
-
-- **Authentication/authorization (SEC-1):** out of scope for MDP-7; no actor/session model exists
-  in the architecture to implement against.
-- **`SyncAttempt` retention/archival (S-1):** append-only by design; no FR specifies a pruning
-  SLA.
-- **Live advisory-lock contention under true concurrency** (the "two concurrent jobs, same
-  `(taskId, provider)`" scenario in `workers.success.test.ts`): exercised as a sequential-call
-  dedup assertion against mocked Prisma, not against a live Postgres connection under real
-  concurrency — this requires a running database and is explicitly out of scope for a mocked unit
-  test, as noted inline in that test file.
-- **Materialized sync-health aggregate table:** deferred per B-1's resolution; the current TTL
-  cache + grouped query is accepted as sufficient for MDP-7's scale.
-
-Nothing from the M0–M14 milestone list was left unimplemented; all deferrals above are the same
-ones `04-impl-plan.md` §0 already named as deliberate, not newly discovered gaps.
+- No commit was created — per this phase's explicit instruction, commits are deferred to Phase 8
+  (pr-creator-agent).
+- `docs/MDP-7/pipeline-state.json` was not modified by this phase, per this run's explicit
+  instruction to the implementation agent (the orchestrator owns that file's phase-5 status
+  transition).
+- No change to `docs/MDP-7/02-architecture.md` (GAP-3's optional follow-up amendment is Phase 2's
+  artifact, not this phase's, and is non-blocking per the plan).
 
 ---
 
-*Per `02-architecture.md` §3.2, the orchestrator — not this agent — updates
-`docs/MDP-7/pipeline-state.json` to mark Phase 5 `completed`.*
+*This document is the implementation-agent's output for Phase 5. Per the plan's own closing note
+and this run's explicit instruction, this agent does not modify `pipeline-state.json`; the
+orchestrator owns that transition.*

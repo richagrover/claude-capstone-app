@@ -15,11 +15,28 @@ import { syncHealthRouter } from "./routes/syncHealth";
 import { AppError, errorHandler, notFoundHandler } from "./errorHandler";
 
 const JSON_BODY_LIMIT = "100kb";
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 100;
+export const RATE_LIMIT_WINDOW_MS = 60_000;
+export const RATE_LIMIT_MAX_REQUESTS = 100;
+
+/**
+ * Parses TRUST_PROXY into the shape Express's "trust proxy" setting expects. Defaults to
+ * `false` (do not trust any proxy) — safe for direct-connect local/dev, which is this app's
+ * default/test topology (resolves SEC-6).
+ */
+function parseTrustProxySetting(raw: string | undefined): boolean | number {
+  if (raw === undefined || raw === "") return false;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  const hops = Number(raw);
+  if (!Number.isNaN(hops) && Number.isInteger(hops) && hops >= 0) return hops;
+  // Unrecognized value: fail safe rather than silently trusting an unvalidated proxy chain.
+  throw new AppError(500, "invalid_trust_proxy_config", `Invalid TRUST_PROXY value: "${raw}"`);
+}
 
 export function createApp(): Express {
   const app = express();
+
+  app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
 
   const allowedOrigin = process.env.FRONTEND_ORIGIN;
   app.use(

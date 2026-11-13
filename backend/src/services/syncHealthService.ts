@@ -115,7 +115,8 @@ async function computeSyncHealth(
 /**
  * Returns the current sync-health snapshot, optionally filtered to one provider. Backed by a
  * process-local TTL cache keyed by the provider filter — a few seconds of staleness on a
- * health/status endpoint is an accepted trade-off (documented in docs/MDP-7/04-impl-plan.md M7).
+ * health/status endpoint is an accepted trade-off (documented in
+ * docs/MDP-7/04-impl-plan.md, GAP-3).
  */
 export async function getSyncHealth(
   provider?: SyncProvider,

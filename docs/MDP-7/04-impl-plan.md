@@ -2,448 +2,301 @@
 
 **Story Key:** MDP-7
 **Phase:** 4 — Implementation Planning
-**Inputs:** `docs/MDP-7/02-architecture.md` (contract), `docs/MDP-7/03-design-review.md` (verdict: **Approved with Changes**)
-**Human checkpoint:** `pipeline-state.json → humanCheckpoints[0].status = "approved"` (confirmed before this phase started)
-**Output consumer:** Phase 5 `implementation-agent`, building `backend/` and `frontend/` from an empty repo
-**Status:** Planning complete — no code written in this phase
+**Run:** 2 (re-run — see §0)
+**Inputs:** `docs/MDP-7/02-architecture.md` (Run 2, as-built re-derivation), `docs/MDP-7/03-design-review.md` (verdict: **Approved with Changes**)
+**Human checkpoint:** `pipeline-state.json → humanCheckpoints[0].status = "approved"` (confirmed; note records
+"proceed through all remaining phases without further pausing")
+**Output consumer:** Phase 5 `implementation-agent`
+**Status:** Planning complete — no application code written in this phase
 
-This plan does not re-derive architecture. Every data model, endpoint, and queue behavior below
-is the contract already fixed in `02-architecture.md`; this document only sequences the coding
-work and resolves the **Should-Fix** / **Note** items the design review raised, per the human's
-direction to carry them forward as explicit requirements rather than redesign blockers.
+## 0. Re-run Basis — this is a gap-closure plan, not a rebuild
 
----
+Unlike this document's previous-run version (a from-scratch M0–M14 scaffolding plan for an empty
+repo), `backend/` and `frontend/` **already exist, already work, and already pass their test
+suites** (75 backend + 5 frontend tests, per `01-requirements.md`). Per the human checkpoint's
+direction and this run's explicit brief, this plan does **not** re-plan anything already built and
+confirmed correct by `02-architecture.md` / `03-design-review.md`'s source spot-checks (CORS, body
+limits, pagination, indexes, sync-idempotency locking, etc. — all already implemented and already
+reviewed as sound). It scopes **only** the small, surgical deltas the design review left open:
 
-## 0. Design-Review Findings — Scope Decisions
+| Gap | Design-review ref | Kind | Code change? |
+|---|---|---|---|
+| GAP-1 | AC-10 / F-1 — rate-limit test missing | test-coverage gap | test-only (+2-line export in `app.ts`) |
+| GAP-2 | SEC-6 — rate limiter has no `trust proxy` setting | Should-Fix, real gap | small, additive, non-breaking |
+| GAP-3 | B-5 / S-4 — sync-health TTL cache undocumented | documentation gap | none (see note below) |
+| GAP-4 | B-6 — `failing[]` capped at 50, no pagination | Note, low priority | none (deferred) |
+| GAP-5 | housekeeping — stale doc cross-reference in source | consistency | 1-line comment fix |
 
-Each finding from `03-design-review.md` is resolved below as either an **implemented task**
-(with the milestone that carries it) or an **explicit, documented scope decision**. None are
-left as silent gaps.
-
-| # | Finding | Severity | Resolution | Carried by |
-|---|---|---|---|---|
-| SEC-1 | No authN/authZ model | Should-Fix (confirm scope) | **Explicit scope decision: out of scope for MDP-7.** Neither `01-requirements.md` nor `02-architecture.md` specifies an actor/session/permission model, and the human checkpoint approved the architecture without adding one. `Task.assignee` remains a free-text label, not a user-account reference. This is documented here as a deliberate deferral, not an oversight, and is flagged as a recommended follow-up story before any multi-tenant or production exposure of this API. | §0.1 |
-| G-1 | Sync-job idempotency race (duplicate create) | Should-Fix | **Implemented.** Per-provider worker concurrency fixed at 1 (serial per lane) plus a Postgres advisory lock around the create-vs-update decision + `SyncLink` upsert, so the race is closed even if concurrency is later raised. | M6 |
-| B-3 | Worker concurrency (serial vs pooled) unspecified | Note | **Implemented as part of G-1's fix**: concurrency = 1 per provider queue, documented and configurable via `QUEUE_CONCURRENCY` env var (default 1) so a future change is a config change, not a design change. | M6 |
-| B-2 | `GET /tasks` unbounded list, no pagination | Should-Fix | **Implemented.** `limit`/`offset` query params, bounded defaults/maxima. | M4 |
-| B-4 | No index on `Task.status`/`assignee`/`priority` (the `GET /tasks` filter columns) | Should-Fix | **Implemented.** Prisma `@@index` on each filter column. | M2 |
-| B-1 | `/sync-health` unindexed aggregate scan, no caching strategy | Should-Fix | **Implemented.** Grouped SQL aggregate (`COUNT ... GROUP BY provider, lastStatus`) backed by an index on `SyncLink(provider, lastStatus)`, plus a short in-memory TTL cache to absorb bursty polling. Materialized-aggregate table explicitly deferred (documented, not silently dropped). | M7 |
-| SEC-2 | No CORS policy specified | Should-Fix | **Implemented.** Explicit single-origin allowlist via `FRONTEND_ORIGIN` env var. | M8 |
-| SEC-3 | No payload size limits / rate limiting | Note | **Implemented** (size limits are in-scope; rate limiting is added as a lightweight defense-in-depth measure). | M8 |
-| S-1 | `SyncAttempt` unbounded growth, no retention policy | Note | **Explicit scope decision: deferred.** Retention/archival is out of scope for MDP-7 (no FR demands it); documented here as a known follow-up (e.g., archive-after-N-days job) rather than implemented now. | §0.1 |
-| S-2 | Backend statelessness/horizontal scalability implied, not stated | Note | **Explicit scope decision: confirmed.** The backend is designed stateless (no in-process session/affinity state beyond the §M7 TTL cache, which is safe to lose on restart or diverge across replicas since it only shortens a read-time aggregate's freshness window). Documented here for the human/Phase 5 record. | §0.1 |
-| G-2 | `pipeline-state.json` writes not specified as atomic | Should-Fix | **Implemented.** A small, dependency-free atomic-write utility (write-to-temp + rename) for the orchestrator to use on every phase-state write going forward. This is pipeline-layer, not application-layer, so it is scoped as its own milestone (M0) outside `backend/`/`frontend/`. | M0 |
-
-### 0.1 Scope decisions — rationale detail
-
-- **Authentication/authorization (SEC-1):** Not implemented. Rationale: adding an actor model
-  would require inventing a user/session contract not present in `01-requirements.md` or
-  `02-architecture.md`; doing so here would be re-deriving architecture, which is explicitly out
-  of scope for this phase. Recommendation recorded for a future story.
-- **`SyncAttempt` retention (S-1):** Not implemented. Rationale: no FR specifies a volume/SLA
-  that requires pruning yet; append-only is the architecture's deliberate auditability trade-off
-  (NFR-6). Recommendation: revisit with a scheduled archival job once attempt volume is observed
-  in production.
-- **Statelessness (S-2):** Confirmed, not changed. The backend holds no durable in-process state;
-  the only in-memory data is the M7 sync-health cache, which is a performance optimization with
-  no correctness dependency — any replica can serve a cache miss by recomputing from Postgres.
+No other item from `03-design-review.md` requires action this phase: SEC-1/S-1/S-3/B-1..B-4/G-1/G-2
+are all carried-forward confirmations ("— positive, confirmed" in the review) with nothing left to
+do.
 
 ---
 
-## 1. Tech Stack (fixes `02-architecture.md` §10's deferred choices)
+## GAP-1 — AC-10 / F-1: rate-limit test coverage (test-only)
 
-| Concern | Choice | Rationale |
-|---|---|---|
-| Backend language/framework | Node.js + TypeScript + Express | Matches architecture diagram ("Backend API (Express + TS)") |
-| ORM | Prisma + PostgreSQL | Matches architecture §4 data model language |
-| Queue/broker | BullMQ + Redis | Satisfies "per-provider queue + bounded retry with backoff" (architecture §10); mature, well-tested Node queue library |
-| Testing | Vitest + Supertest (routes) | Lightweight, TS-native, matches existing test file naming convention |
-| Frontend | React + TypeScript + Vite | Matches architecture diagram ("React Frontend") |
-| Frontend data fetching | Fetch wrapper + React Query (TanStack Query) | Handles polling (`/sync-health`) and cache invalidation cleanly |
-| Linting/formatting | ESLint + Prettier (shared config, backend + frontend) | NFR-4 consistency |
+**Files:** `backend/src/app.ts` (trivial export only), `backend/src/__tests__/app.hardening.test.ts`
+
+The middleware itself is correct and unchanged (confirmed by direct read, §6.1/§6.3 of
+`02-architecture.md`): `express-rate-limit` mounted on `/api`, `windowMs = 60_000`, `max = 100`,
+`handler` returns `429` with body `{ error: "rate_limited", message: "Too many requests. Please
+try again later." }` exactly. Only the test is missing.
+
+1. **`backend/src/app.ts`** — add `export` to the two existing constant declarations so the test
+   can assert against the real values instead of a re-typed magic number (code-quality: avoid
+   hardcoded/duplicated literals):
+   ```ts
+   export const RATE_LIMIT_WINDOW_MS = 60_000;
+   export const RATE_LIMIT_MAX_REQUESTS = 100;
+   ```
+   No behavior change — same values, now importable.
+2. **`backend/src/__tests__/app.hardening.test.ts`** — add a new block, following the file's
+   existing pattern exactly (same `vi.mock(...)`s, same `beforeEach` setting `FRONTEND_ORIGIN`,
+   same `createApp()` + `supertest(app)` harness):
+   ```ts
+   import { createApp, RATE_LIMIT_MAX_REQUESTS } from "../app";
+
+   describe("Rate limiting (resolves NFR-8(c) / AC-10)", () => {
+     it("returns 429 with the structured body once the per-window request cap is exceeded", async () => {
+       const app = createApp(); // one instance for the whole test — the limiter's in-memory
+                                 // bucket must be shared across every request below
+       for (let i = 0; i < RATE_LIMIT_MAX_REQUESTS; i++) {
+         const res = await request(app).get("/api/tasks").set("Origin", "http://localhost:5173");
+         expect(res.status).not.toBe(429);
+       }
+       const res = await request(app).get("/api/tasks").set("Origin", "http://localhost:5173");
+       expect(res.status).toBe(429);
+       expect(res.body).toEqual({
+         error: "rate_limited",
+         message: "Too many requests. Please try again later.",
+       });
+     }, 20_000); // 101 sequential in-process requests; default vitest timeout may be tight
+   });
+   ```
+3. Run `npm test` in `backend/` — confirm this new test passes and the existing CORS/payload/404
+   tests in the same file are unaffected (same mocked `taskService.listTasks` resolves instantly,
+   so looping is fast; all requests share one process-local `req.ip`, so they land in one bucket).
+
+**Why no `app.ts` logic change:** `03-design-review.md` §5 explicitly confirms the middleware
+config needs no change for AC-10 as scoped — only §6.3's test. GAP-2 below is a related but
+*separate* gap (SEC-6), not conflated with this one, per the review's own instruction.
+
+**Acceptance:** new test passes; full `backend` suite (76 tests after this addition) stays green;
+no change to any other route's behavior.
 
 ---
 
-## 2. Target Directory Layout
+## GAP-2 — SEC-6: configurable `trust proxy` for the rate limiter
+
+**Files:** `backend/src/app.ts`, `backend/.env.example`, `backend/src/__tests__/app.hardening.test.ts`
+
+**Problem (confirmed by source read):** `express-rate-limit` keys by `req.ip`. With no
+`app.set("trust proxy", ...)`, Express ignores `X-Forwarded-For` entirely — fine for direct-connect
+local/dev (today's test harness and local `npm run dev`), but behind a real reverse
+proxy/load-balancer in production, every client would resolve to the proxy's IP, collapsing the
+100 req/min limit into one shared bucket for *all* callers. Fix must stay additive and
+non-breaking for the current direct-connect case (default behavior must not change).
+
+1. **`backend/src/app.ts`** — add a small, explicit parser and call `app.set(...)` once, near the
+   top of `createApp()` (before any middleware that reads `req.ip`):
+   ```ts
+   /** Parses TRUST_PROXY into the shape Express's "trust proxy" setting expects. Defaults to
+    * `false` (do not trust any proxy) — safe for direct-connect local/dev, which is this
+    * app's default/test topology (resolves SEC-6). */
+   function parseTrustProxySetting(raw: string | undefined): boolean | number {
+     if (raw === undefined || raw === "") return false;
+     if (raw === "true") return true;
+     if (raw === "false") return false;
+     const hops = Number(raw);
+     if (!Number.isNaN(hops) && Number.isInteger(hops) && hops >= 0) return hops;
+     // Unrecognized value: fail safe rather than silently trusting an unvalidated proxy chain.
+     throw new AppError(500, "invalid_trust_proxy_config", `Invalid TRUST_PROXY value: "${raw}"`);
+   }
+
+   app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
+   ```
+   - Unset (today's state, and every existing test): `false` — **identical behavior to today**,
+     so no existing test changes.
+   - `TRUST_PROXY=1` (one trusted hop, e.g. a single reverse proxy/load balancer in front of the
+     app) or any non-negative integer (N trusted hops) — the documented production value.
+   - `TRUST_PROXY=true` — trust all hops (only for a fully trusted internal network); documented
+     as the less-safe option, not the recommended default.
+   - Throwing (not silently defaulting) on garbage input is deliberate: a misconfigured proxy
+     trust setting is a security-relevant misconfiguration, not something to paper over (NFR-3:
+     "avoid... unhandled exceptions" — this *is* handled, as a clear startup-time `AppError`
+     rather than a silent wrong-behavior fallback).
+2. **`backend/.env.example`** — add, after `FRONTEND_ORIGIN`:
+   ```
+   # Reverse-proxy trust for the /api rate limiter's client-IP keying (resolves SEC-6). Leave
+   # unset for direct-connect local/dev (default: do not trust any proxy). In production behind
+   # a reverse proxy/load balancer, set to the number of trusted hops in front of this process
+   # (typically 1) so express-rate-limit keys by the real client IP from X-Forwarded-For instead
+   # of the proxy's IP. Only set this to a value that matches your actual trusted deployment
+   # topology — trusting an untrusted proxy chain lets a client spoof X-Forwarded-For to evade
+   # the rate limit.
+   TRUST_PROXY=
+   ```
+3. **`backend/src/__tests__/app.hardening.test.ts`** — add one small settings-level test (not a
+   full proxy simulation, which `supertest`'s in-process harness cannot provide — see note below):
+   ```ts
+   describe("Trust proxy configuration (resolves SEC-6)", () => {
+     afterEach(() => {
+       delete process.env.TRUST_PROXY;
+     });
+
+     it("defaults to not trusting any proxy when TRUST_PROXY is unset", () => {
+       const app = createApp();
+       expect(app.get("trust proxy")).toBe(false);
+     });
+
+     it("trusts the configured number of hops when TRUST_PROXY is set", () => {
+       process.env.TRUST_PROXY = "1";
+       const app = createApp();
+       expect(app.get("trust proxy")).toBe(1);
+     });
+
+     it("rejects an invalid TRUST_PROXY value at app-creation time", () => {
+       process.env.TRUST_PROXY = "not-a-number";
+       expect(() => createApp()).toThrow();
+     });
+   });
+   ```
+   **Scope note (consistent with `03-design-review.md` §5's own caveat):** this verifies the
+   *setting* is applied correctly; it intentionally does not simulate a real proxy rewriting
+   `req.ip`, which would require a second hop `supertest` cannot represent. That remains a
+   deployment-level concern to verify manually once a real reverse proxy is in front of a
+   deployed instance — out of scope for an in-process unit/integration test, exactly as the design
+   review notes for the GAP-1 rate-limit test.
+4. **Doc note (non-blocking, not actioned by this plan):** `03-design-review.md` §8 item 2 also
+   suggests `02-architecture.md` §6.1/§11 could state this topology assumption explicitly. That
+   edit belongs to the Phase-2 artifact this phase does not own; recording the decision here (env
+   var name, default, semantics) is this phase's complete contribution. Recommend a follow-up
+   architecture-doc amendment, not a blocker.
+
+**Acceptance:** three new tests pass; `TRUST_PROXY` unset preserves today's exact behavior (no
+regression to GAP-1's test or any existing test); `.env.example` documents the name only, no value
+(NFR-1).
+
+---
+
+## GAP-3 — B-5 / S-4: sync-health TTL cache documentation
+
+**Files:** none planned for change by this phase; see verification note below.
+
+`backend/src/services/syncHealthService.ts` already implements `SYNC_HEALTH_CACHE_TTL_MS = 5000`
+as a process-local `Map` keyed by the provider filter (confirmed by direct read) — this is real,
+correct, and requires **no code change**. The design review's finding is purely that
+`02-architecture.md` didn't describe it.
+
+**Verification performed for this plan:** this phase re-checked `docs/MDP-7/02-architecture.md`
+directly (not just the brief that assumed it) — as of the version read for this plan, the document
+does **not** yet contain the words "cache"/"TTL" anywhere, so the gap is not actually closed in
+that file yet. Since `02-architecture.md` is Phase 2's owned artifact (not this phase's), this plan
+does not edit it; instead, per the previous run's own precedent (that document's §0.1 documented
+`S-1`/`S-2` inline when the architecture text was silent), this plan records the trade-off here as
+the authoritative note for this run, so it is not a silent gap:
+
+> **Trade-off, confirmed accepted:** `GET /api/sync-health` is served from a 5-second, per-process,
+> in-memory TTL cache keyed by the optional `provider` filter. This bounds staleness to ≤5s on a
+> read-only status endpoint (not a mutation path) and is not a correctness risk — a cache miss
+> always recomputes from Postgres. It does mean the backend is not perfectly stateless: if ever run
+> as more than one instance, two concurrent callers can see different counts for up to 5s depending
+> on which instance answers. Accepted for the current single-instance deployment shape. If
+> horizontal scaling is introduced later, this would need to move to a shared cache (e.g. Redis) or
+> be removed — flagged as a future follow-up, not required now.
+
+**Recommended (optional, non-blocking) follow-up:** a short, separate doc-only amendment to
+`02-architecture.md` §5.2/§8 adding the paragraph above, done by re-entering Phase 2 or as a direct
+human edit — not required to unblock Phase 5.
+
+**Acceptance:** no code change; this section is the closed record of the decision for this run.
+
+---
+
+## GAP-4 — B-6: `failing[]` cap at 50, no pagination (deferred)
+
+**Files:** none changed.
+
+`computeSyncHealth`'s `failing` array is capped at `FAILING_LIST_PAGE_SIZE = 50` with no
+`total`/`limit`/`offset`, unlike `GET /tasks`' pagination (M4 in the prior run's plan). The design
+review itself classifies this as a **Note**, not a Should-Fix, and recommends deferring absent a
+concrete trigger.
+
+**Decision: defer.** Rationale:
+- No FR/AC in `01-requirements.md` requires it.
+- No observed failing-sync volume near 50 in current usage.
+- Adding pagination here now, with no driving requirement, is scope creep inconsistent with this
+  run's explicit "surgical gap-closure, not redesign" directive.
+
+**If revisited later**, the fix is small and already sketched by precedent: mirror
+`clampLimit`/`clampOffset` from `validation.ts` onto the `failingLinks` query (`take`/`skip`, plus
+a `prisma.syncLink.count` for a `failingTotal`), and add `failingTotal`/`failingLimit`/
+`failingOffset` to `SyncHealthResult`. Left here as a pointer for a future pass, not actioned now.
+
+**Acceptance:** explicitly documented, non-silent deferral — no action required for Phase 5.
+
+---
+
+## GAP-5 — housekeeping: stale in-code doc cross-reference
+
+**Files:** `backend/src/services/syncHealthService.ts`
+
+While verifying GAP-3, this phase found `getSyncHealth`'s doc comment (line ~118) reads:
 
 ```
-backend/
-  src/
-    app.ts                  # Express app wiring (routes, middleware)
-    index.ts                # HTTP server entrypoint
-    db.ts                   # Prisma client singleton
-    errorHandler.ts         # Centralized error-handling middleware
-    validation.ts           # Request validation helpers (enums, UUID, limits)
-    atomicState.ts          # (re-exported from pipeline-layer util, see M0) — NOT used by app; omitted if unused
-    routes/
-      tasks.ts
-      syncHealth.ts
-    services/
-      taskService.ts
-      syncHealthService.ts
-    queue/
-      connection.ts          # Redis connection factory
-      queueNames.ts
-      queues.ts               # BullMQ Queue instances, one per provider
-      types.ts                 # Job payload types
-      providerInterface.ts     # SyncProviderClient interface
-      providers/
-        githubProvider.ts
-        jiraProvider.ts
-      workers.ts               # Worker factories (concurrency, advisory lock, retry/backoff)
-      worker-main.ts           # Worker process entrypoint
-    __tests__/
-      taskService.test.ts
-      syncHealthService.test.ts
-      tasks.routes.test.ts
-      workers.success.test.ts
-      workers.failure.test.ts
-  prisma/
-    schema.prisma
-  .env.example
-  .gitignore
-  package.json
-  tsconfig.json
-  vitest.config.ts
-
-frontend/
-  src/
-    main.tsx
-    App.tsx
-    api/
-      client.ts               # fetch wrapper, base URL from env
-      tasks.ts                # task CRUD calls
-      syncHealth.ts
-    components/
-      TaskBoard.tsx
-      TaskForm.tsx
-      TaskCard.tsx
-      SyncStatusBadge.tsx
-      SyncHealthPanel.tsx
-    hooks/
-      useTasks.ts
-      useSyncHealth.ts
-    types/
-      task.ts
-    __tests__/
-      TaskBoard.test.tsx
-      useTasks.test.ts
-  .env.example
-  .gitignore
-  package.json
-  tsconfig.json
-  vite.config.ts
+"...a few seconds of staleness on a health/status endpoint is an accepted trade-off (documented in
+docs/MDP-7/04-impl-plan.md M7)."
 ```
 
----
+This refers to the previous run's milestone numbering (`M7`), which no longer exists in this
+document's structure. Trivial, non-functional fix:
 
-## 3. Milestones (ordered; each is a Phase-5 coding unit)
+1. Update the comment to point at the current location of the decision record:
+   ```ts
+   /**
+    * Returns the current sync-health snapshot, optionally filtered to one provider. Backed by a
+    * process-local TTL cache keyed by the provider filter — a few seconds of staleness on a
+    * health/status endpoint is an accepted trade-off (documented in
+    * docs/MDP-7/04-impl-plan.md, GAP-3).
+    */
+   ```
 
-### M0 — Pipeline-layer hardening: atomic state writes (resolves G-2)
-
-Outside `backend/`/`frontend/`; a pipeline-layer utility the orchestrator uses for every future
-`pipeline-state.json` write (including the one that follows this phase's handback).
-
-1. Create `.claude/lib/atomicWriteJson.ts` (or `.cjs`/`.mjs` — no build step, dependency-free):
-   exports `writeJsonAtomic(path: string, data: unknown): void` implemented as
-   `write to "<path>.tmp-<pid>-<timestamp>"` → `fs.renameSync(tmp, path)` (rename is atomic on
-   the same filesystem), with the temp file cleaned up on write failure.
-2. Document in a short header comment: this is the mechanism that satisfies `02-architecture.md`
-   §3.2's "never a partially-written one" guarantee and NFR-5.
-3. No test framework is wired for `.claude/` scripts yet; add a minimal manual verification note
-   (not a unit test) — out of scope to stand up a second test runner for one utility function.
-
-**Acceptance:** utility exists, is importable, and its write-then-rename behavior is documented
-inline; orchestrator process (this agent pipeline) adopts it for all subsequent phase-state
-writes from Phase 5 onward.
-
-### M1 — Backend scaffolding
-
-1. `backend/package.json` — scripts: `dev`, `build`, `start`, `test`, `worker`; dependencies:
-   `express`, `@prisma/client`, `bullmq`, `ioredis`, `cors`, `express-rate-limit`, `zod` (or
-   equivalent) for validation; devDependencies: `typescript`, `prisma`, `vitest`, `supertest`,
-   `@types/*`, `eslint`, `prettier`.
-2. `backend/tsconfig.json` — strict mode on (`strict: true`), `noImplicitAny`, ES2022 target.
-3. `backend/.gitignore` — `node_modules`, `.env`, `dist`.
-4. `backend/.env.example` — **names only**, per NFR-1: `DATABASE_URL`, `REDIS_URL` (renamed from
-   architecture's generic `QUEUE_URL` to the concrete BullMQ backing store), `GITHUB_TOKEN`,
-   `GITHUB_REPO`, `JIRA_API_TOKEN`, `JIRA_BASE_URL`, `JIRA_PROJECT_KEY`, `FRONTEND_ORIGIN`,
-   `PORT`, `QUEUE_CONCURRENCY` (default documented as `1`).
-5. `backend/vitest.config.ts` — Node environment, coverage enabled (NFR-3: business logic must
-   be covered).
-
-**Acceptance:** `npm install` succeeds; `npm run build` produces no type errors on an empty
-`src/index.ts` stub.
-
-### M2 — Data layer: Prisma schema (resolves B-4)
-
-1. `backend/prisma/schema.prisma`:
-   - `enum TaskStatus { Backlog InProgress InReview Done }` (default `Backlog`)
-   - `enum TaskPriority { Low Medium High }` (default `Medium`)
-   - `enum SyncProvider { github jira }`
-   - `enum SyncResult { ok failed }`
-   - `model Task` — fields per architecture §4 (`id` UUID default, `title`, `description?`,
-     `status`, `priority`, `assignee?`, `dueDate?`, `labels String[] @default([])`,
-     `createdAt @default(now())`, `updatedAt @updatedAt`).
-     - `@@index([status])`, `@@index([assignee])`, `@@index([priority])` — **resolves B-4**.
-   - `model SyncLink` — `id`, `taskId String` (plain column, **no** `@relation` to `Task`, per
-     architecture §4's documented delete-closes-linked-issue rationale), `provider`,
-     `externalKeyOrUrl?`, `lastSyncedAt?`, `lastStatus SyncResult?`, `lastError?`.
-     - `@@unique([taskId, provider])`
-     - `@@index([provider, lastStatus])` — **resolves B-1** (backs the sync-health aggregate).
-   - `model SyncAttempt` — `id`, `taskId String` (plain column, same rationale), `provider`,
-     `timestamp @default(now())`, `result`, `detail?`.
-     - `@@index([taskId])` (already specified in architecture).
-2. Generate an initial migration: `npx prisma migrate dev --name init`.
-3. `backend/src/db.ts` — single `PrismaClient` instance, exported, with
-   `log: ["warn", "error"]` (never logs query params that could contain `description`/labels
-   content with secrets — NFR-1 defense-in-depth).
-
-**Acceptance:** `prisma migrate dev` runs clean against a local Postgres; generated client types
-match the model above.
-
-### M3 — Validation & centralized error handling
-
-1. `backend/src/validation.ts`:
-   - `isValidUuid(id: string): boolean`
-   - `parseTaskStatus`, `parseTaskPriority` — reject unknown values (never coerce, per §5.2).
-   - Field-length caps (**resolves SEC-3**): `title` required, 1–200 chars after trim;
-     `description` optional, ≤5000 chars; `labels` array ≤20 items, each ≤50 chars; `assignee`
-     optional, ≤200 chars.
-   - Each validator returns a discriminated result (`{ ok: true, value }` |
-     `{ ok: false, error: { code, message } }`) — no thrown exceptions for expected validation
-     failures, per NFR-3 ("unhandled exceptions disallowed").
-2. `backend/src/errorHandler.ts` — Express error middleware: maps known validation errors to
-   `400` with `{ error, message }`; maps "not found" to `404`; catches everything else as `500`
-   with a generic message, logging the real error server-side only — never a stack trace or
-   internal detail in the response body (§5.2, NFR-3/4).
-3. Unit tests for `validation.ts` edge cases (empty title, whitespace-only title, oversized
-   description, invalid enum, malformed UUID).
-
-**Acceptance:** all validators have passing unit tests covering valid, boundary, and invalid
-inputs.
-
-### M4 — Task CRUD: service + routes (resolves B-2)
-
-1. `backend/src/services/taskService.ts` — pure functions over Prisma, no Express types leak in:
-   - `listTasks({ status?, assignee?, priority?, limit = 50, offset = 0 })` → caps `limit` at a
-     hard max (e.g., 200) regardless of requested value — **resolves B-2**; returns
-     `{ tasks, total, limit, offset }`.
-   - `getTask(id)` → task + `syncLinks[]` projection (architecture §5.1), or `null`.
-   - `createTask(input)` → inserts with defaults, then triggers sync enqueue (M5) for the
-     "create" case.
-   - `updateTask(id, patch)` → partial update; triggers sync enqueue (M5) only if a mapped field
-     changed (`status`/`priority`/`assignee`/title/description per provider mapping chosen in
-     M6).
-   - `deleteTask(id)` → idempotent delete (second delete on a missing id still returns success
-     semantics the route maps to `204`); triggers "close" sync enqueue (M5) using a snapshot of
-     the task taken immediately before delete.
-2. `backend/src/routes/tasks.ts` — thin layer: parses/validates query & body via `validation.ts`,
-   calls `taskService`, maps results to the status codes in architecture §5 table, never calls
-   Prisma directly.
-3. `backend/src/app.ts` — mounts `/api/tasks` router, JSON body parsing, error handler last.
-4. Integration tests (`tasks.routes.test.ts`, Supertest + a test database or mocked Prisma):
-   cover every row of the architecture §5 table (200/201/204/400/404 paths), plus pagination
-   bounds (requesting `limit=10000` is clamped, not rejected) and the two "malformed id → 400"
-   cases (`GET`/`PATCH`/`DELETE` by non-UUID id).
-
-**Acceptance:** route tests green; `taskService` unit-testable with Prisma mocked (NFR-3).
-
-### M5 — Sync queue infrastructure
-
-1. `backend/src/queue/connection.ts` — single `ioredis` connection factory from `REDIS_URL`.
-2. `backend/src/queue/queueNames.ts` — `"sync-github"`, `"sync-jira"` constants.
-3. `backend/src/queue/types.ts` — `SyncJobPayload { taskId, provider, operation: "create" |
-   "update" | "close", snapshot: { title, status, priority, assignee, labels } }` — the snapshot
-   is captured at enqueue time so a `close` job never needs to re-read a possibly-deleted `Task`
-   row (architecture §6 step 2).
-4. `backend/src/queue/queues.ts` — one BullMQ `Queue` per provider, both configured with the
-   bounded exponential-backoff retry policy from architecture §6 step 5 (e.g.,
-   `attempts: 5, backoff: { type: "exponential", delay: 1000 }`).
-5. Wire `taskService`'s create/update/delete to enqueue onto whichever provider queues are
-   configured (env-var presence check — see M6 point 5) — enqueue call is fire-and-forget, never
-   `await`ed by the request handler (architecture §2, §6 step 2).
-
-**Acceptance:** enqueue calls are unit-testable by mocking the `Queue.add` call; no HTTP request
-handler awaits a queue operation.
-
-### M6 — Sync workers + provider adapters (resolves G-1, B-3)
-
-1. `backend/src/queue/providerInterface.ts` — `SyncProviderClient { createIssue(snapshot):
-   Promise<{ externalKeyOrUrl }>; updateIssue(externalKeyOrUrl, snapshot): Promise<void>;
-   closeIssue(externalKeyOrUrl): Promise<void> }`.
-2. `backend/src/queue/providers/githubProvider.ts`, `jiraProvider.ts` — implement the interface
-   against each REST API, reading `GITHUB_TOKEN`/`GITHUB_REPO` or
-   `JIRA_API_TOKEN`/`JIRA_BASE_URL`/`JIRA_PROJECT_KEY` once at module load; no other layer ever
-   sees the raw token (NFR-1).
-3. **Partial provider configuration** (architecture §6 step 6): at worker-process start, each
-   provider adapter checks its required env vars; if absent, that provider's worker is not
-   started (logged once, not per-job) and jobs on that queue are left pending rather than
-   crashing the process. The other provider's worker continues independently.
-4. **Idempotency / dedup fix (resolves G-1) and concurrency fix (resolves B-3)**, in
-   `backend/src/queue/workers.ts`:
-   - Each provider `Worker` is created with `concurrency` read from `QUEUE_CONCURRENCY`
-     (**default `1`** — serial processing per lane, closing B-3 by making the behavior explicit
-     and configurable rather than undefined).
-   - Inside the job processor, before the create-vs-update branch, acquire a Postgres session
-     advisory lock scoped to `(taskId, provider)`:
-     `SELECT pg_advisory_xact_lock(hashtext(taskId || ':' || provider))` inside the same
-     transaction that reads `SyncLink`, decides create vs update, calls the provider adapter, and
-     upserts `SyncLink` + inserts `SyncAttempt`. The lock is released automatically at
-     transaction end. This makes the create-vs-update decision safe even if `QUEUE_CONCURRENCY`
-     is later raised above 1 — **resolves G-1** without depending solely on serial processing.
-   - On provider-call failure, the transaction still commits the `SyncAttempt` (`failed`) and
-     `SyncLink` update — failure bookkeeping is never lost — then BullMQ's retry/backoff (M5)
-     reschedules the job up to its attempt cap.
-5. `backend/src/queue/worker-main.ts` — process entrypoint that starts both workers; run via
-   `npm run worker`, separate process from the API server (statelessness, S-2).
-6. Tests: `workers.success.test.ts` (create → update → close happy path, snapshot-based close
-   after task deletion), `workers.failure.test.ts` (provider call throws → `SyncAttempt(failed)`
-   recorded, job retried per backoff policy, process does not crash); a dedicated test
-   simulating two concurrent jobs for the same `(taskId, provider)` asserting only one
-   `createIssue` call occurs.
-
-**Acceptance:** concurrency + advisory-lock tests pass; partial-config test (one provider's env
-vars absent) shows the other provider's worker still processes jobs.
-
-### M7 — Sync-health endpoint (resolves B-1)
-
-1. `backend/src/services/syncHealthService.ts`:
-   - Single grouped SQL query (via Prisma `groupBy` or raw SQL) over `SyncLink`, filtered to
-     `taskId`s of currently-existing tasks, producing counts per `(provider, lastStatus)` —
-     backed by the `@@index([provider, lastStatus])` added in M2. `pending` is derived as
-     `expected (existing tasks × configured providers) − rows with non-null lastStatus`, per
-     architecture §4's "pending is derived, not stored" rule.
-   - `failing: [...]` list: tasks whose latest `SyncLink.lastStatus = "failed"`, with
-     `lastError`, capped at a reasonable page size (reuses the pagination pattern from M4).
-   - **Caching (resolves B-1):** wrap the computed result in a process-local TTL cache (e.g., 5
-     seconds), keyed by the optional `provider` filter, invalidated naturally on expiry — no
-     invalidation-on-write needed since a few seconds of staleness on a health/status endpoint is
-     an accepted trade-off, explicitly documented here rather than left unstated. A materialized
-     aggregate table is documented as the next escalation if load ever requires sub-second
-     freshness at high volume (deferred, not implemented — consistent with S-1's deferred
-     posture).
-2. `backend/src/routes/syncHealth.ts` — `GET /api/sync-health`, optional `provider` query param,
-   validated against the `SyncProvider` enum.
-3. Unit tests for `syncHealthService` covering: no tasks, all pending, mixed ok/failed/pending,
-   a deleted task's stale `SyncLink` correctly excluded from the "existing tasks" denominator
-   (architecture §4's explicit edge case), and cache-hit vs cache-expiry behavior.
-
-**Acceptance:** sync-health tests pass, including the deleted-task exclusion case called out in
-the architecture doc.
-
-### M8 — Cross-cutting hardening (resolves SEC-2, SEC-3)
-
-1. **CORS (resolves SEC-2):** in `app.ts`, configure the `cors` middleware with a single-origin
-   allowlist read from `FRONTEND_ORIGIN` (no wildcard `*`), `credentials: false` (no cookies/auth
-   in scope per §0.1's SEC-1 decision), explicit allowed methods (`GET, POST, PATCH, DELETE`).
-2. **Payload limits (resolves SEC-3):** `express.json({ limit: "100kb" })`; field-level caps
-   already enforced in M3's validators.
-3. **Rate limiting (resolves SEC-3, defense-in-depth):** `express-rate-limit` mounted on `/api`,
-   a conservative window (e.g., 100 req/min/IP), returning the same structured error body shape
-   (`429` with `{ error: "rate_limited", message }`) for consistency with §5.2.
-4. Integration test asserting a cross-origin request from a non-allowlisted origin is rejected,
-   and one asserting an oversized JSON body is rejected with `400`/`413` rather than crashing the
-   process.
-
-**Acceptance:** CORS/size/rate-limit tests pass; no behavior change to existing route tests from
-M4.
-
-### M9 — Backend test completion & coverage pass
-
-1. Confirm coverage of all business logic per NFR-3: `taskService`, `syncHealthService`,
-   `validation.ts`, provider adapters (mocked HTTP), workers.
-2. Run full suite (`npm test`) locally; fix any gaps before moving to frontend milestones so
-   Phase 6 (code-review) and Phase 7 (verification) start from a green backend.
-
-**Acceptance:** `npm test` green; coverage report shows no untested service/validation module.
-
-### M10 — Frontend scaffolding
-
-1. `frontend/package.json` — Vite + React + TypeScript template; dependencies: `react`,
-   `react-dom`, `@tanstack/react-query`; devDependencies: `typescript`, `vite`, `vitest`,
-   `@testing-library/react`, `eslint`, `prettier`.
-2. `frontend/.env.example` — `VITE_API_BASE_URL` (name only, per NFR-1).
-3. `frontend/tsconfig.json` — strict mode on, matching backend's rigor (NFR-4 consistency).
-4. `frontend/src/api/client.ts` — thin fetch wrapper: base URL from
-   `import.meta.env.VITE_API_BASE_URL`, structured-error-aware (surfaces `{ error, message }`
-   from a non-2xx response as a typed exception the UI can render, never a raw stack trace).
-
-**Acceptance:** `npm run dev` serves a blank app with no type errors.
-
-### M11 — Frontend: task board
-
-1. `frontend/src/types/task.ts` — mirrors backend `Task`/`SyncLink` shapes (manually kept in
-   sync; architecture doesn't specify a shared-types package, so this is an explicit,
-   intentionally duplicated contract boundary).
-2. `frontend/src/api/tasks.ts` — `listTasks(filters, pagination)`, `getTask(id)`, `createTask`,
-   `updateTask`, `deleteTask`, matching the M4 backend contract including `limit`/`offset`.
-3. `frontend/src/hooks/useTasks.ts` — React Query hook wrapping `listTasks`, with filter/page
-   state.
-4. `frontend/src/components/TaskBoard.tsx`, `TaskCard.tsx`, `TaskForm.tsx`,
-   `SyncStatusBadge.tsx` — board view grouped by status, create/edit form with the same
-   validation boundaries as the backend (client-side mirrors M3's caps for immediate feedback;
-   server remains the source of truth), per-provider sync badges from the `syncStatus[]`
-   projection (architecture §5.1).
-5. Pagination controls wired to the `limit`/`offset` params from M4/B-2.
-6. Component tests (`TaskBoard.test.tsx`, `useTasks.test.ts`) with the API layer mocked.
-
-**Acceptance:** board renders, create/edit/delete flows work against a running backend; tests
-green with API mocked.
-
-### M12 — Frontend: sync-health view
-
-1. `frontend/src/api/syncHealth.ts`, `frontend/src/hooks/useSyncHealth.ts` — polling hook (sane
-   interval, e.g., 15s, respecting the backend's M7 cache TTL so polling doesn't defeat the
-   cache).
-2. `frontend/src/components/SyncHealthPanel.tsx` — renders `counts`, `byProvider`, `failing[]`
-   with `lastError` text.
-
-**Acceptance:** panel reflects backend `/api/sync-health` state and updates on poll.
-
-### M13 — Docs & environment wiring
-
-1. Root or per-package `README.md` sections: setup (`.env` from `.env.example`, `prisma migrate
-   dev`, `npm run dev`, `npm run worker`), matching NFR-1 (names only, no values anywhere).
-2. Confirm `.env.example` files in both `backend/` and `frontend/` are git-tracked while `.env`
-   is git-ignored in both.
-
-**Acceptance:** a fresh clone + `.env` fill-in can run the full stack following the README alone.
-
-### M14 — Phase-5 readiness checklist
-
-Before handing off to the `implementation-agent` (Phase 5), confirm this plan's milestones each
-have: target files, explicit acceptance criteria, and a named design-review finding (if
-applicable) they resolve. Phase 5 should implement milestones **in the order listed** (M0 → M13),
-since M2–M9 (backend) establish the contract M10–M12 (frontend) consume, and M0 is independent
-pipeline-layer housekeeping that can land anytime before the next phase-state write.
+**Acceptance:** comment accurately points at a section that exists; no behavioral change.
 
 ---
 
-## 4. Traceability Summary
+## Sequencing for Phase 5
 
-| Requirement/Finding | Resolved by |
-|---|---|
-| FR-9 (task CRUD) | M4 |
-| FR-10 (sync-health) | M5, M6, M7 |
-| NFR-1 (no hardcoded secrets) | M1 (.env.example), M6 (token scoping) |
-| NFR-2 (git workflow) | Enforced by orchestrator/PR phase, not this plan's concern |
-| NFR-3 (clean code, tests) | M3, M4, M6, M7, M9 |
-| NFR-4 (consistency) | M1/M10 shared strictness, M8 error-shape consistency |
-| SEC-1 (authN/authZ) | §0.1 — explicit out-of-scope decision |
-| SEC-2 (CORS) | M8 |
-| SEC-3 (payload limits/rate limiting) | M3 (field caps), M8 (body size, rate limit) |
-| G-1 (idempotency race) | M6 |
-| G-2 (atomic state writes) | M0 |
-| B-1 (/sync-health scan+caching) | M2 (index), M7 (caching) |
-| B-2 (pagination) | M4 |
-| B-3 (worker concurrency) | M6 |
-| B-4 (filter-column indexes) | M2 |
-| S-1 (SyncAttempt retention) | §0.1 — explicit deferred decision |
-| S-2 (statelessness) | §0.1 — explicit confirmation |
+1. GAP-5 (comment-only, zero risk) — do first, trivially.
+2. GAP-2's `app.ts` change (adds `trust proxy` setting) — do before GAP-1's test, since GAP-1's
+   test should run against the final `app.ts`, not an intermediate version.
+3. GAP-1's test + GAP-2's tests — add together to `app.hardening.test.ts` in one pass (same file,
+   same patterns, avoids two near-duplicate diffs).
+4. GAP-3 / GAP-4 — no code; already resolved by this document.
+5. Run `npm test` and `npm run build` in `backend/` (AC-11) to confirm the full suite — existing
+   75 tests + up to 4 new ones — stays green and the build stays clean. No frontend change is
+   planned or required by this run's gaps.
+
+**Total estimated surface area:** 2 files touched with real code changes (`app.ts`,
+`app.hardening.test.ts`), 1 file with a comment-only edit (`syncHealthService.ts`), 1 file with an
+additive env-var doc line (`.env.example`). No schema, route, service-logic, or frontend change.
 
 ---
 
-*This document is the implementation-planner-agent's output for Phase 4. Per `02-architecture.md`
-§3.2, the orchestrator — not this agent — updates `docs/MDP-7/pipeline-state.json` to mark Phase
-4 `completed`.*
+## Traceability Summary
+
+| Finding | Severity (per `03-design-review.md`) | Resolution | Section |
+|---|---|---|---|
+| AC-10 / F-1 | test-coverage gap | Implemented (test + 2-line export) | GAP-1 |
+| SEC-6 | Should-Fix | Implemented (configurable, safe-default `trust proxy`) | GAP-2 |
+| B-5 | Should-Fix (doc) | Documented here; code already correct, unchanged | GAP-3 |
+| S-4 | Should-Fix (doc) | Documented here; accepted single-instance trade-off | GAP-3 |
+| B-6 | Note | Explicitly deferred, not actioned | GAP-4 |
+| (housekeeping) | — | Stale doc cross-reference fixed | GAP-5 |
+| SEC-1, S-1, S-2, S-3, B-1, B-2, B-3, B-4, G-1, G-2 | — (confirmed, carried) | No action — already resolved and source-confirmed by `03-design-review.md`; nothing further for this plan | — |
+
+---
+
+*This document is the implementation-planner-agent's output for Phase 4. Per `.claude/rules/workflow-state.md`
+and `02-architecture.md` §3.2, the orchestrator — not this agent — updates
+`docs/MDP-7/pipeline-state.json` to mark Phase 4 `completed`; this agent does not modify that file.*
